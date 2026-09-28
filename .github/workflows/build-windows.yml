@@ -1,11 +1,16 @@
-name: Build Windows Executable
+name: Build and Release Windows Executable
 
 on:
   push:
     branches: [ "main", "master" ]
+    tags:
+      - "v*"
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -37,3 +42,16 @@ jobs:
           name: solidchecker-windows-exe
           path: dist/solidchecker.exe
           if-no-files-found: error
+
+      - name: Create Automatic GitHub Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v1.0.{0}', github.run_number) }}
+          name: ${{ github.ref_type == 'tag' && github.ref_name || format('Release v1.0.{0}', github.run_number) }}
+          body: "Release automático del ejecutable de Windows para SolidChecker."
+          draft: false
+          prerelease: false
+          files: dist/solidchecker.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
