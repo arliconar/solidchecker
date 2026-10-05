@@ -122,5 +122,142 @@ class TestSolidChecker(unittest.TestCase):
             if os.path.exists(p2):
                 os.remove(p2)
 
+    def test_sample_files_computer_coincidence_detected(self):
+        f1 = 'cruz alma mayte.SLDPRT'
+        f2 = 'pieza 1 Maria Guadalupe Sanchez Martinez.SLDPRT'
+        if os.path.exists(f1) and os.path.exists(f2):
+            records = [
+                {
+                    'student_name': 'Alma Mayte Cruz',
+                    'student_id': 'id_1',
+                    'original_filename': f1,
+                    'local_path': f1,
+                    'extension': '.sldprt'
+                },
+                {
+                    'student_name': 'Maria Guadalupe Sanchez Martinez',
+                    'student_id': 'id_2',
+                    'original_filename': f2,
+                    'local_path': f2,
+                    'extension': '.sldprt'
+                }
+            ]
+            analysis = analyze_submissions(records, tempfile.gettempdir())
+            self.assertEqual(analysis['duplicate_count'], 2)
+            self.assertTrue(analysis['results'][0]['is_duplicate'])
+            self.assertTrue(analysis['results'][1]['is_duplicate'])
+            self.assertIn('LABCAD20', analysis['results'][0]['status_msg'])
+            self.assertIn('LABCAD20', analysis['results'][1]['status_msg'])
+            self.assertEqual(analysis['results'][0]['origin_computer'], 'LABCAD20')
+            self.assertEqual(analysis['results'][1]['origin_computer'], 'LABCAD20')
+
+    def test_different_computers_not_duplicates(self):
+        records = [
+            {
+                'student_name': 'Alumno A',
+                'student_id': 'id_a',
+                'original_filename': 'p1.sldprt',
+                'local_path': 'p1.sldprt',
+                'extension': '.sldprt'
+            },
+            {
+                'student_name': 'Alumno B',
+                'student_id': 'id_b',
+                'original_filename': 'p2.sldprt',
+                'local_path': 'p2.sldprt',
+                'extension': '.sldprt'
+            }
+        ]
+        from unittest.mock import patch
+        with patch('analyzer.parse_solidworks_file') as mock_parse:
+            mock_parse.side_effect = [
+                {
+                    'extension': '.sldprt',
+                    'author': 'Sin autor registrado',
+                    'origin_computer': 'LAPTOP-CARLOS',
+                    'last_computer': 'LAPTOP-CARLOS',
+                    'computer_display': 'LAPTOP-CARLOS',
+                    'workstations': ['LAPTOP-CARLOS'],
+                    'last_saved_by': 'SOLIDWORKS 2025',
+                    'creation_date': '2026-09-28',
+                    'last_saved_date': '2026-09-29',
+                    'file_hash': 'hash1',
+                    'is_corrupted': False,
+                    'error': None
+                },
+                {
+                    'extension': '.sldprt',
+                    'author': 'Sin autor registrado',
+                    'origin_computer': 'DESKTOP-ANA',
+                    'last_computer': 'DESKTOP-ANA',
+                    'computer_display': 'DESKTOP-ANA',
+                    'workstations': ['DESKTOP-ANA'],
+                    'last_saved_by': 'SOLIDWORKS 2025',
+                    'creation_date': '2026-09-28',
+                    'last_saved_date': '2026-09-29',
+                    'file_hash': 'hash2',
+                    'is_corrupted': False,
+                    'error': None
+                }
+            ]
+            analysis = analyze_submissions(records, tempfile.gettempdir())
+            self.assertEqual(analysis['duplicate_count'], 0)
+            self.assertFalse(analysis['results'][0]['is_duplicate'])
+            self.assertFalse(analysis['results'][1]['is_duplicate'])
+
+    def test_actual_author_match_detected(self):
+        records = [
+            {
+                'student_name': 'Alumno A',
+                'student_id': 'id_a',
+                'original_filename': 'p1.sldprt',
+                'local_path': 'p1.sldprt',
+                'extension': '.sldprt'
+            },
+            {
+                'student_name': 'Alumno B',
+                'student_id': 'id_b',
+                'original_filename': 'p2.sldprt',
+                'local_path': 'p2.sldprt',
+                'extension': '.sldprt'
+            }
+        ]
+        from unittest.mock import patch
+        with patch('analyzer.parse_solidworks_file') as mock_parse:
+            mock_parse.side_effect = [
+                {
+                    'extension': '.sldprt',
+                    'author': 'Roberto Gomez',
+                    'origin_computer': 'PC-1',
+                    'last_computer': 'PC-1',
+                    'computer_display': 'PC-1',
+                    'workstations': ['PC-1'],
+                    'last_saved_by': 'SOLIDWORKS 2025',
+                    'creation_date': '2026-09-28',
+                    'last_saved_date': '2026-09-29',
+                    'file_hash': 'hash1',
+                    'is_corrupted': False,
+                    'error': None
+                },
+                {
+                    'extension': '.sldprt',
+                    'author': 'Roberto Gomez',
+                    'origin_computer': 'PC-2',
+                    'last_computer': 'PC-2',
+                    'computer_display': 'PC-2',
+                    'workstations': ['PC-2'],
+                    'last_saved_by': 'SOLIDWORKS 2025',
+                    'creation_date': '2026-09-28',
+                    'last_saved_date': '2026-09-29',
+                    'file_hash': 'hash2',
+                    'is_corrupted': False,
+                    'error': None
+                }
+            ]
+            analysis = analyze_submissions(records, tempfile.gettempdir())
+            self.assertEqual(analysis['duplicate_count'], 2)
+            self.assertTrue(analysis['results'][0]['is_duplicate'])
+            self.assertIn('COINCIDENCIA DE AUTOR', analysis['results'][0]['status_msg'])
+
 if __name__ == '__main__':
     unittest.main()

@@ -226,14 +226,15 @@ class MainWindow(QMainWindow):
 
         # ------------------ RESULTS TABLE ------------------
         self.table = QTableWidget()
-        self.table.setColumnCount(8)
+        self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels([
             "Estado",
             "Alumno (Classroom)",
             "Pieza / Archivo",
             "Tipo",
-            "Autor Registrado (SolidWorks)",
-            "Último Guardado Por",
+            "Computadora / Equipo",
+            "Autor Registrado",
+            "Versión SolidWorks",
             "Fecha Creación",
             "Detalles / Diagnóstico"
         ])
@@ -244,12 +245,14 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.Interactive)
         header.setSectionResizeMode(5, QHeaderView.Interactive)
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(7, QHeaderView.Stretch)
-        self.table.setColumnWidth(1, 170)
-        self.table.setColumnWidth(2, 190)
-        self.table.setColumnWidth(4, 220)
-        self.table.setColumnWidth(5, 170)
+        header.setSectionResizeMode(6, QHeaderView.Interactive)
+        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(8, QHeaderView.Stretch)
+        self.table.setColumnWidth(1, 160)
+        self.table.setColumnWidth(2, 170)
+        self.table.setColumnWidth(4, 180)
+        self.table.setColumnWidth(5, 140)
+        self.table.setColumnWidth(6, 140)
         self.table.setAlternatingRowColors(True)
 
         main_layout.addWidget(self.table)
@@ -441,7 +444,13 @@ class MainWindow(QMainWindow):
             if r.get('is_corrupted'):
                 status_text = "💥 DAÑADO"
             elif r.get('is_duplicate'):
-                status_text = "⚠️ DUPLICADO"
+                msg = r.get('status_msg', '')
+                if 'COPIA EXACTA' in msg:
+                    status_text = "⚠️ COPIA"
+                elif 'MISMO EQUIPO' in msg or 'MISMA COMPUTADORA' in msg or 'EQUIPO' in msg:
+                    status_text = "⚠️ MISMO EQUIPO"
+                else:
+                    status_text = "⚠️ DUPLICADO"
             else:
                 status_text = "✅ OK"
 
@@ -452,6 +461,7 @@ class MainWindow(QMainWindow):
             filename_item = QTableWidgetItem(r['filename'])
             ext_item = QTableWidgetItem(r['extension'].upper())
 
+            comp_item = QTableWidgetItem(r.get('computer_display', 'Desconocido'))
             author_item = QTableWidgetItem(r['author'])
             last_by_item = QTableWidgetItem(r['last_saved_by'])
 
@@ -460,11 +470,13 @@ class MainWindow(QMainWindow):
 
             msg_item = QTableWidgetItem(r['status_msg'])
 
+            all_items = (status_item, student_item, filename_item, ext_item, comp_item, author_item, last_by_item, date_item, msg_item)
+
             # Apply custom row formatting
             if r.get('is_corrupted'):
                 bg_color = QColor("#FFF7ED") # Soft orange background
                 fg_color = QColor("#C2410C") # Dark orange text
-                for item in (status_item, student_item, filename_item, ext_item, author_item, last_by_item, date_item, msg_item):
+                for item in all_items:
                     item.setBackground(bg_color)
                     item.setForeground(fg_color)
                     font = item.font()
@@ -473,7 +485,7 @@ class MainWindow(QMainWindow):
             elif r.get('is_duplicate'):
                 bg_color = QColor("#FEF2F2") # Soft red background
                 fg_color = QColor("#B91C1C") # Dark red text
-                for item in (status_item, student_item, filename_item, ext_item, author_item, last_by_item, date_item, msg_item):
+                for item in all_items:
                     item.setBackground(bg_color)
                     item.setForeground(fg_color)
                     font = item.font()
@@ -482,7 +494,7 @@ class MainWindow(QMainWindow):
             else:
                 bg_color = QColor("#F0FDF4") # Soft green background
                 fg_color = QColor("#15803D") # Dark green text
-                for item in (status_item, student_item, filename_item, ext_item, author_item, last_by_item, date_item, msg_item):
+                for item in all_items:
                     item.setBackground(bg_color)
                     item.setForeground(fg_color)
 
@@ -490,10 +502,11 @@ class MainWindow(QMainWindow):
             self.table.setItem(row_idx, 1, student_item)
             self.table.setItem(row_idx, 2, filename_item)
             self.table.setItem(row_idx, 3, ext_item)
-            self.table.setItem(row_idx, 4, author_item)
-            self.table.setItem(row_idx, 5, last_by_item)
-            self.table.setItem(row_idx, 6, date_item)
-            self.table.setItem(row_idx, 7, msg_item)
+            self.table.setItem(row_idx, 4, comp_item)
+            self.table.setItem(row_idx, 5, author_item)
+            self.table.setItem(row_idx, 6, last_by_item)
+            self.table.setItem(row_idx, 7, date_item)
+            self.table.setItem(row_idx, 8, msg_item)
 
     def _apply_filters(self):
         query = self.search_box.text().lower().strip()
@@ -508,7 +521,7 @@ class MainWindow(QMainWindow):
                 continue
 
             if query:
-                search_target = f"{r['student_name']} {r['filename']} {r['author']} {r['last_saved_by']} {r['status_msg']}".lower()
+                search_target = f"{r['student_name']} {r['filename']} {r.get('computer_display', '')} {r['author']} {r['last_saved_by']} {r['status_msg']}".lower()
                 if query not in search_target:
                     continue
 
@@ -530,7 +543,7 @@ class MainWindow(QMainWindow):
 
         headers = [
             "Estado", "Alumno (Classroom)", "Pieza / Archivo", "Tipo",
-            "Autor Registrado (SolidWorks)", "Último Guardado Por", "Fecha Creación", "Detalles / Diagnóstico"
+            "Computadora / Equipo", "Autor Registrado", "Versión SolidWorks", "Fecha Creación", "Detalles / Diagnóstico"
         ]
         ws.append(headers)
 
@@ -539,7 +552,7 @@ class MainWindow(QMainWindow):
             if r.get('is_corrupted'):
                 st = "DAÑADO / CORRUPTO"
             elif r.get('is_duplicate'):
-                st = "DUPLICADO"
+                st = "COPIA / MISMO EQUIPO"
             else:
                 st = "OK"
 
@@ -548,6 +561,7 @@ class MainWindow(QMainWindow):
                 r['student_name'],
                 r['filename'],
                 r['extension'].upper(),
+                r.get('computer_display', 'Desconocido'),
                 r['author'],
                 r['last_saved_by'],
                 created_str,
@@ -573,14 +587,14 @@ class MainWindow(QMainWindow):
                 writer = csv.writer(f)
                 writer.writerow([
                     "Estado", "Alumno", "Archivo", "Tipo",
-                    "Autor_SolidWorks", "Ultimo_Guardado_Por", "Fecha_Creacion", "Detalles"
+                    "Computadora_Equipo", "Autor_SolidWorks", "Version_SolidWorks", "Fecha_Creacion", "Detalles"
                 ])
                 for r in self.all_results:
                     created_str = _format_date(r.get('creation_date'))
                     if r.get('is_corrupted'):
                         st = "DAÑADO / CORRUPTO"
                     elif r.get('is_duplicate'):
-                        st = "DUPLICADO"
+                        st = "COPIA / MISMO EQUIPO"
                     else:
                         st = "OK"
 
@@ -589,6 +603,7 @@ class MainWindow(QMainWindow):
                         r['student_name'],
                         r['filename'],
                         r['extension'].upper(),
+                        r.get('computer_display', 'Desconocido'),
                         r['author'],
                         r['last_saved_by'],
                         created_str,

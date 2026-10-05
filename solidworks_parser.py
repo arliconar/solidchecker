@@ -6,6 +6,7 @@ import hashlib
 import olefile
 import re
 import zlib
+import struct
 
 GENERIC_NAMES = {
     'default', 'predeterminado', 'normal', 'solidworks', 'user', 'usuario',
@@ -13,14 +14,29 @@ GENERIC_NAMES = {
     'part', 'part1', 'created', 'modified', 'anotaciones', 'alzado', 'planta',
     'origen', 'comentarios', 'material', 'vistas', 'sensores', 'favoritos',
     'historial', 'ecuaciones', 'marcas', 'cuaderno', 'luces', 'camaras', 'solidos',
-    'superficies', 'conjuntos', 'predeterminada', 'solidworks (versión moderna)'
+    'superficies', 'conjuntos', 'predeterminada', 'solidworks (versión moderna)',
+    'alumno', 'alumnos', 'estudiante', 'estudiantes', 'docente', 'profesor',
+    'sin autor', 'sin autor registrado', 'desconocido', 'unknown', 'no especificado',
+    'guest', 'invitado', 'public', 'publico'
 }
 
-def _is_valid_name(val):
+def is_machine_or_generic_name(val):
     if not val:
-        return False
+        return True
     v = str(val).strip().lower()
-    return len(v) >= 2 and v not in GENERIC_NAMES
+    if len(v) < 2 or v in GENERIC_NAMES:
+        return True
+    # Detect computer lab machines and generic hostnames (e.g. LABCAD20, PC-01, LAB-02, DESKTOP-XYZ)
+    if re.match(r'^(lab|labcad|aula|taller|compu|pc|equipo|maquina|ws|workstation)[-_0-9a-z]*$', v):
+        return True
+    if re.match(r'^(desktop|laptop|win)-[a-z0-9]+$', v):
+        return True
+    if 'solidworks' in v:
+        return True
+    return False
+
+def _is_valid_name(val):
+    return not is_machine_or_generic_name(val)
 
 def _convert_sw_timestamp(ts_str):
     try:
@@ -30,6 +46,93 @@ def _convert_sw_timestamp(ts_str):
     except Exception:
         pass
     return None
+
+def extract_workstation_history(file_path, data=None):
+    """
+    Extracts the list of computer workstation names (hostnames) that have
+    created, edited, or saved the SolidWorks document from moHeader_c / su_CStringArray
+    and XML properties.
+    """
+    machines = []
+    try:
+        if data is None and os.path.exists(file_path):
+            with open(file_path, 'rb') as f:
+                data = f.read()
+
+        if data:
+            file_size = len(data)
+            # Scan for moHeader_c su_CStringArray in all zlib & raw deflate streams
+            for i in range(0, file_size - 10, 2):
+                for wbits in (-15, 15, 31):
+                    try:
+                        decomp = zlib.decompress(data[i:i+65536], wbits)
+                        if b'moHeader_c' in decomp and b'su_CStringArray' in decomp:
+                            idx = decomp.find(b'su_CStringArray')
+                            if idx != -1:
+                                after = decomp[idx + len(b'su_CStringArray'):]
+                                count = struct.unpack('<H', after[:2])[0]
+                                rest = after[2:]
+                                found = []
+                                for m in re.finditer(b'(?:[\x20-\x7e]\x00){2,}', rest[:400]):
+                                    s = m.group(0).decode('utf-16le', errors='ignore').strip()
+                                    if s in ('Created', 'Modified', 'Pieza1') or s.startswith('mo'):
+                                        break
+                                    if s and len(s) >= 2:
+                                        found.append(s)
+                                    if len(found) >= count:
+                                        break
+                                if found:
+                                    machines = found
+                                    break
+                    except Exception:
+                        pass
+                if machines:
+                    break
+
+            # Check XML properties (SW-Last Saved By, dc:lastModifiedBy, dc:creator)
+            xml_comps = []
+            for i in range(0, file_size - 10, 2):
+                for wbits in (-15, 15, 31):
+                    try:
+                        decomp = zlib.decompress(data[i:i+65536], wbits)
+                        if b'SW-Last Saved By' in decomp or b'lastModifiedBy' in decomp:
+                            txt = decomp.decode('utf-8', errors='ignore')
+                            m1 = re.search(r'<property[^>]*name="SW-Last Saved By"[^>]*>\s*<vt:lpstr>([^<]+)</vt:lpstr>', txt)
+                            if m1 and m1.group(1).strip():
+                                c = m1.group(1).strip()
+                                if c not in xml_comps:
+                                    xml_comps.append(c)
+                            m2 = re.search(r'<(?:dc:)?lastModifiedBy>([^<]+)</', txt)
+                            if m2 and m2.group(1).strip():
+                                c = m2.group(1).strip()
+                                if c not in xml_comps:
+                                    xml_comps.append(c)
+                    except Exception:
+                        pass
+
+            for c in xml_comps:
+                if c not in machines and not c.lower().startswith('solidworks'):
+                    machines.append(c)
+
+    except Exception:
+        pass
+
+    origin = machines[0] if machines else 'Desconocido'
+    last = machines[-1] if machines else 'Desconocido'
+    if len(machines) > 1:
+        history_str = ' → '.join(machines)
+    elif machines:
+        history_str = machines[0]
+    else:
+        history_str = 'Desconocido'
+
+    return {
+        'workstations': machines,
+        'origin_computer': origin,
+        'last_computer': last,
+        'computer_display': history_str,
+        'computer_name': origin
+    }
 
 def _extract_modern_sw_xml_props(file_path):
     """
@@ -77,8 +180,6 @@ def _extract_modern_sw_xml_props(file_path):
                                 if not props['user_path']:
                                     props['user_path'] = m_u.group(1).strip()
                                 break
-                            if not props['author'] and _is_valid_name(s_clean):
-                                props['author'] = s_clean
 
                     # 2. Text & XML Property Matching
                     if b'Properties' in decomp or b'swFile' in decomp or b'coreProperties' in decomp or b'lastModifiedBy' in decomp:
@@ -147,17 +248,13 @@ def _extract_modern_sw_xml_props(file_path):
                     year = 1992 + (ver_num // 1000)
                     props['sw_version'] = f"SolidWorks {year} (v{ver_num})"
 
-        # Fallbacks for author and last_saved_by
+        # Fallbacks for author and last_saved_by (from user folder path)
         if not _is_valid_name(props['author']):
-            if _is_valid_name(props['last_saved_by']):
-                props['author'] = props['last_saved_by']
-            elif _is_valid_name(props['user_path']):
+            if _is_valid_name(props['user_path']):
                 props['author'] = props['user_path']
 
         if not _is_valid_name(props['last_saved_by']):
-            if _is_valid_name(props['author']):
-                props['last_saved_by'] = props['author']
-            elif _is_valid_name(props['user_path']):
+            if _is_valid_name(props['user_path']):
                 props['last_saved_by'] = props['user_path']
 
     except Exception:
@@ -195,26 +292,27 @@ def _extract_modern_solidworks_props(file_path):
             0xeb, 0x8e, 0x6d, 0x88, 0xf2, 0x8c, 0x46, 0x44, 0x8d, 0x02, 0xcd, 0xba, 0x1d, 0xbd, 0xcf, 0x99
         )
 
+        abs_path = os.path.abspath(file_path)
         pStore = ctypes.c_void_p()
         hr = shell32.SHGetPropertyStoreFromParsingName(
-            file_path, None, 0, ctypes.byref(IID_IPropertyStore), ctypes.byref(pStore)
+            abs_path, None, 0, ctypes.byref(IID_IPropertyStore), ctypes.byref(pStore)
         )
         if hr == 0 and pStore.value:
             vtable = ctypes.cast(pStore.value, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
-            GetCountFunc = ctypes.WINFUNCTYPE(ctypes.HRESULT, ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD))(vtable[3])
-            GetAtFunc = ctypes.WINFUNCTYPE(ctypes.HRESULT, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(PROPERTYKEY))(vtable[4])
-            GetValueFunc = ctypes.WINFUNCTYPE(ctypes.HRESULT, ctypes.c_void_p, ctypes.POINTER(PROPERTYKEY), ctypes.c_void_p)(vtable[5])
+            GetCountFunc = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD))(vtable[3])
+            GetAtFunc = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(PROPERTYKEY))(vtable[4])
+            GetValueFunc = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(PROPERTYKEY), ctypes.c_void_p)(vtable[5])
 
             count = wintypes.DWORD()
             GetCountFunc(pStore, ctypes.byref(count))
 
             PSGetNameFromPropertyKey = propsys.PSGetNameFromPropertyKey
             PSGetNameFromPropertyKey.argtypes = [ctypes.POINTER(PROPERTYKEY), ctypes.POINTER(ctypes.c_wchar_p)]
-            PSGetNameFromPropertyKey.restype = ctypes.HRESULT
+            PSGetNameFromPropertyKey.restype = ctypes.c_long
 
             PSFormatForDisplayAlloc = propsys.PSFormatForDisplayAlloc
             PSFormatForDisplayAlloc.argtypes = [ctypes.POINTER(PROPERTYKEY), ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_wchar_p)]
-            PSFormatForDisplayAlloc.restype = ctypes.HRESULT
+            PSFormatForDisplayAlloc.restype = ctypes.c_long
 
             raw_props = {}
             for i in range(count.value):
@@ -271,11 +369,11 @@ def _extract_modern_solidworks_props(file_path):
         props['last_saved_by'] = xml_props['last_saved_by']
     if not _is_valid_name(props['author']) and _is_valid_name(xml_props['user_path']):
         props['author'] = xml_props['user_path']
-    if not _is_valid_name(props['last_saved_by']) and _is_valid_name(xml_props['user_path']):
-        props['last_saved_by'] = xml_props['user_path']
-    if not props['creation_date'] and xml_props['creation_date']:
+    if xml_props.get('creation_date'):
         props['creation_date'] = xml_props['creation_date']
-    if not _is_valid_name(props['last_saved_by']) and xml_props['sw_version']:
+    if not props['last_saved_by'] and xml_props.get('last_saved_by'):
+        props['last_saved_by'] = xml_props['last_saved_by']
+    if not props['last_saved_by'] and xml_props.get('sw_version'):
         props['last_saved_by'] = xml_props['sw_version']
 
     return props
@@ -293,6 +391,11 @@ def parse_solidworks_file(file_path):
         'file_size': os.path.getsize(file_path) if os.path.exists(file_path) else 0,
         'extension': os.path.splitext(file_path)[1].lower(),
         'author': 'Sin autor registrado',
+        'origin_computer': 'Desconocido',
+        'last_computer': 'Desconocido',
+        'computer_display': 'Desconocido',
+        'computer_name': 'Desconocido',
+        'workstations': [],
         'last_saved_by': 'SolidWorks',
         'creation_date': None,
         'last_saved_date': None,
@@ -329,6 +432,14 @@ def parse_solidworks_file(file_path):
         result['error'] = 'El archivo está dañado (compuesto exclusivamente de ceros/bytes nulos).'
         return result
 
+    # Extract workstation computer names from internal structures
+    comp_info = extract_workstation_history(file_path, data)
+    result['workstations'] = comp_info['workstations']
+    result['origin_computer'] = comp_info['origin_computer']
+    result['last_computer'] = comp_info['last_computer']
+    result['computer_display'] = comp_info['computer_display']
+    result['computer_name'] = comp_info['computer_name']
+
     # 1. Legacy OLE2 structured storage (SolidWorks 2014 and older)
     if olefile.isOleFile(file_path):
         try:
@@ -345,11 +456,18 @@ def parse_solidworks_file(file_path):
 
             if _is_valid_name(author):
                 result['author'] = author
-            elif _is_valid_name(last_saved):
-                result['author'] = last_saved
+            else:
+                result['author'] = 'Sin autor registrado'
 
             if _is_valid_name(last_saved):
                 result['last_saved_by'] = last_saved
+
+            if not result['workstations'] and last_saved and len(last_saved) >= 2:
+                result['origin_computer'] = last_saved
+                result['last_computer'] = last_saved
+                result['computer_display'] = last_saved
+                result['computer_name'] = last_saved
+                result['workstations'] = [last_saved]
 
             if meta.create_time:
                 result['creation_date'] = meta.create_time.strftime('%d/%m/%Y %H:%M:%S') if hasattr(meta.create_time, 'strftime') else str(meta.create_time)
@@ -380,13 +498,15 @@ def parse_solidworks_file(file_path):
 
         if _is_valid_name(modern_props['author']):
             result['author'] = modern_props['author']
-        elif _is_valid_name(modern_props['last_saved_by']):
-            result['author'] = modern_props['last_saved_by']
+        else:
+            result['author'] = 'Sin autor registrado'
 
-        if _is_valid_name(modern_props['last_saved_by']):
+        if modern_props.get('last_saved_by'):
             result['last_saved_by'] = modern_props['last_saved_by']
-        elif _is_valid_name(modern_props['author']):
-            result['last_saved_by'] = modern_props['author']
+        elif modern_props.get('sw_version'):
+            result['last_saved_by'] = modern_props['sw_version']
+        else:
+            result['last_saved_by'] = 'SolidWorks (Versión moderna)'
 
         if modern_props['creation_date']:
             result['creation_date'] = modern_props['creation_date']
