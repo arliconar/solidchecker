@@ -55,6 +55,7 @@ def analyze_submissions(downloaded_records, temp_dir):
                     'last_saved_by': sw_data['last_saved_by'],
                     'creation_date': sw_data['creation_date'],
                     'last_saved_date': sw_data['last_saved_date'],
+                    'file_hash': sw_data.get('file_hash'),
                     'is_corrupted': sw_data['is_corrupted'],
                     'error': sw_data['error'],
                     'is_duplicate': False,
@@ -74,6 +75,7 @@ def analyze_submissions(downloaded_records, temp_dir):
                 'last_saved_by': sw_data['last_saved_by'],
                 'creation_date': sw_data['creation_date'],
                 'last_saved_date': sw_data['last_saved_date'],
+                'file_hash': sw_data.get('file_hash'),
                 'is_corrupted': sw_data['is_corrupted'],
                 'error': sw_data['error'],
                 'is_duplicate': False,
@@ -81,9 +83,14 @@ def analyze_submissions(downloaded_records, temp_dir):
                 'status_msg': ''
             })
 
-    # Group by author to detect duplicates across DIFFERENT students
-    generic_authors = {'desconocido', 'unknown', 'solidworks', 'user', 'usuario', 'administrator', 'admin', '', 'n/a'}
+    # Group by author and by file hash to detect duplicates across DIFFERENT students
+    generic_authors = {
+        'desconocido', 'unknown', 'solidworks', 'user', 'usuario',
+        'administrator', 'admin', '', 'n/a', 'sin autor registrado',
+        'no especificado', 'sin autor'
+    }
     author_student_map = {}
+    hash_student_map = {}
 
     for entry in parsed_entries:
         if entry['is_corrupted']:
@@ -96,7 +103,14 @@ def analyze_submissions(downloaded_records, temp_dir):
                 author_student_map[norm_author] = set()
             author_student_map[norm_author].add(entry['student_name'])
 
+        fhash = entry.get('file_hash')
+        if fhash:
+            if fhash not in hash_student_map:
+                hash_student_map[fhash] = set()
+            hash_student_map[fhash].add(entry['student_name'])
+
     duplicate_authors = {auth for auth, students in author_student_map.items() if len(students) > 1}
+    duplicate_hashes = {h for h, students in hash_student_map.items() if len(students) > 1}
 
     corrupted_count = 0
     duplicate_count = 0
@@ -104,19 +118,28 @@ def analyze_submissions(downloaded_records, temp_dir):
     for entry in parsed_entries:
         author = entry['author'].strip()
         norm_author = author.lower()
+        fhash = entry.get('file_hash')
 
         if entry['is_corrupted']:
             corrupted_count += 1
             entry['status_msg'] = f"💥 ARCHIVO DAÑADO / CORRUPTO: {entry['error']}"
+        elif fhash in duplicate_hashes:
+            duplicate_count += 1
+            all_students = sorted(list(hash_student_map[fhash]))
+            other_students = [s for s in all_students if s != entry['student_name']]
+            entry['is_duplicate'] = True
+            entry['duplicate_students'] = other_students
+            entry['status_msg'] = f"⚠️ COPIA EXACTA: Archivo binario idéntico al de {', '.join(other_students)}"
         elif norm_author in duplicate_authors:
             duplicate_count += 1
             all_students = sorted(list(author_student_map[norm_author]))
             other_students = [s for s in all_students if s != entry['student_name']]
             entry['is_duplicate'] = True
             entry['duplicate_students'] = other_students
-            entry['status_msg'] = f"⚠️ COINCIDENCIA DETECTADA: Autor '{author}' también en entrega de {', '.join(other_students)}"
+            entry['status_msg'] = f"⚠️ COINCIDENCIA DE AUTOR: '{author}' también en entrega de {', '.join(other_students)}"
         else:
-            entry['status_msg'] = "✅ Correcto"
+            ver = entry.get('last_saved_by') or 'SolidWorks'
+            entry['status_msg'] = f"✅ OK ({ver})"
 
     return {
         'results': parsed_entries,

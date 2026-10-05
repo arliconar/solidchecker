@@ -19,7 +19,7 @@ class TestSolidChecker(unittest.TestCase):
         try:
             res_corrupted = parse_solidworks_file(corrupted_path)
             self.assertTrue(res_corrupted['is_corrupted'])
-            self.assertIn('no tiene una estructura OLE2 válida', res_corrupted['error'])
+            self.assertIn('OLE2', res_corrupted['error'])
 
             res_empty = parse_solidworks_file(empty_path)
             self.assertTrue(res_empty['is_corrupted'])
@@ -62,6 +62,65 @@ class TestSolidChecker(unittest.TestCase):
         ]
 
         self.assertTrue(parsed_entries[0]['is_corrupted'])
+
+    def test_null_bytes_corrupted(self):
+        with tempfile.NamedTemporaryFile(suffix='.sldprt', delete=False) as tf:
+            tf.write(b"\x00" * 1024)
+            path = tf.name
+        try:
+            res = parse_solidworks_file(path)
+            self.assertTrue(res['is_corrupted'])
+            self.assertIn('ceros', res['error'])
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+
+    def test_modern_solidworks_header_detection(self):
+        with tempfile.NamedTemporaryFile(suffix='.sldprt', delete=False) as tf:
+            tf.write(b"\xf4\xe9\x02\xfc\x00\x00\x00\x04" + b"\x01" * 100)
+            path = tf.name
+        try:
+            res = parse_solidworks_file(path)
+            self.assertFalse(res['is_corrupted'])
+            self.assertIn('SolidWorks', res['last_saved_by'])
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+
+    def test_analyzer_duplicate_by_hash(self):
+        with tempfile.NamedTemporaryFile(suffix='.sldprt', delete=False) as tf1:
+            tf1.write(b"\xf4\xe9\x02\xfc\x00\x00\x00\x04" + b"identical_content")
+            p1 = tf1.name
+        with tempfile.NamedTemporaryFile(suffix='.sldprt', delete=False) as tf2:
+            tf2.write(b"\xf4\xe9\x02\xfc\x00\x00\x00\x04" + b"identical_content")
+            p2 = tf2.name
+        try:
+            records = [
+                {
+                    'student_name': 'Estudiante A',
+                    'student_id': 'id_a',
+                    'original_filename': 'tarea.sldprt',
+                    'local_path': p1,
+                    'extension': '.sldprt'
+                },
+                {
+                    'student_name': 'Estudiante B',
+                    'student_id': 'id_b',
+                    'original_filename': 'entrega.sldprt',
+                    'local_path': p2,
+                    'extension': '.sldprt'
+                }
+            ]
+            analysis = analyze_submissions(records, tempfile.gettempdir())
+            self.assertEqual(analysis['duplicate_count'], 2)
+            self.assertTrue(analysis['results'][0]['is_duplicate'])
+            self.assertTrue(analysis['results'][1]['is_duplicate'])
+            self.assertIn('COPIA EXACTA', analysis['results'][0]['status_msg'])
+        finally:
+            if os.path.exists(p1):
+                os.remove(p1)
+            if os.path.exists(p2):
+                os.remove(p2)
 
 if __name__ == '__main__':
     unittest.main()

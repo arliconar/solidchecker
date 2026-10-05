@@ -15,6 +15,14 @@ from PySide6.QtWidgets import (
 from classroom_api import ClassroomManager
 from analyzer import analyze_submissions
 
+def _format_date(dt):
+    if not dt:
+        return "N/A"
+    if hasattr(dt, "strftime"):
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    return str(dt)
+
+
 class AuthWorker(QThread):
     finished_signal = Signal(bool, object, str)
 
@@ -104,6 +112,11 @@ class MainWindow(QMainWindow):
         self.all_results = []
         self.duplicate_summary = {}
 
+        app = QApplication.instance()
+        if app and not app.styleSheet():
+            from main import apply_app_theme
+            apply_app_theme(app)
+
         self._setup_ui()
         self._check_initial_auth()
 
@@ -116,22 +129,24 @@ class MainWindow(QMainWindow):
 
         # ------------------ HEADER / AUTH BAR ------------------
         header_frame = QFrame()
-        header_frame.setFrameShape(QFrame.StyledPanel)
+        header_frame.setObjectName("headerFrame")
+        header_frame.setFrameShape(QFrame.NoFrame)
         header_layout = QHBoxLayout(header_frame)
 
         title_label = QLabel("🛠️ SolidChecker")
         title_font = QFont("Segoe UI", 16, QFont.Bold)
         title_label.setFont(title_font)
+        title_label.setStyleSheet("color: #0F172A;")
         header_layout.addWidget(title_label)
 
         subtitle_label = QLabel("Analizador de metadatos de autoría y corrupción en entregas de SolidWorks")
-        subtitle_label.setStyleSheet("color: #666;")
+        subtitle_label.setStyleSheet("color: #64748B; font-size: 13px;")
         header_layout.addWidget(subtitle_label)
 
         header_layout.addStretch()
 
         self.user_label = QLabel("Estado: No autenticado")
-        self.user_label.setStyleSheet("font-weight: bold; color: #D32F2F;")
+        self.user_label.setStyleSheet("font-weight: bold; color: #DC2626;")
         header_layout.addWidget(self.user_label)
 
         self.btn_auth = QPushButton("🔑 Iniciar Sesión con Google")
@@ -156,8 +171,8 @@ class MainWindow(QMainWindow):
         self.combo_coursework.setMinimumWidth(280)
 
         self.btn_analyze = QPushButton("📥 Descargar y Analizar")
+        self.btn_analyze.setObjectName("btnAnalyze")
         self.btn_analyze.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        self.btn_analyze.setStyleSheet("background-color: #1976D2; color: white; padding: 6px 16px;")
         self.btn_analyze.setCursor(Qt.PointingHandCursor)
         self.btn_analyze.clicked.connect(self._start_analysis)
         self.btn_analyze.setEnabled(False)
@@ -231,6 +246,10 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(5, QHeaderView.Interactive)
         header.setSectionResizeMode(6, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(7, QHeaderView.Stretch)
+        self.table.setColumnWidth(1, 170)
+        self.table.setColumnWidth(2, 190)
+        self.table.setColumnWidth(4, 220)
+        self.table.setColumnWidth(5, 170)
         self.table.setAlternatingRowColors(True)
 
         main_layout.addWidget(self.table)
@@ -436,15 +455,15 @@ class MainWindow(QMainWindow):
             author_item = QTableWidgetItem(r['author'])
             last_by_item = QTableWidgetItem(r['last_saved_by'])
 
-            created_str = r['creation_date'].strftime("%Y-%m-%d %H:%M:%S") if r['creation_date'] else "N/A"
+            created_str = _format_date(r.get('creation_date'))
             date_item = QTableWidgetItem(created_str)
 
             msg_item = QTableWidgetItem(r['status_msg'])
 
             # Apply custom row formatting
             if r.get('is_corrupted'):
-                bg_color = QColor("#FFE0B2") # Amber/Orange tint
-                fg_color = QColor("#E65100")
+                bg_color = QColor("#FFF7ED") # Soft orange background
+                fg_color = QColor("#C2410C") # Dark orange text
                 for item in (status_item, student_item, filename_item, ext_item, author_item, last_by_item, date_item, msg_item):
                     item.setBackground(bg_color)
                     item.setForeground(fg_color)
@@ -452,8 +471,8 @@ class MainWindow(QMainWindow):
                     font.setBold(True)
                     item.setFont(font)
             elif r.get('is_duplicate'):
-                bg_color = QColor("#FFCDD2") # Red tint
-                fg_color = QColor("#B71C1C")
+                bg_color = QColor("#FEF2F2") # Soft red background
+                fg_color = QColor("#B91C1C") # Dark red text
                 for item in (status_item, student_item, filename_item, ext_item, author_item, last_by_item, date_item, msg_item):
                     item.setBackground(bg_color)
                     item.setForeground(fg_color)
@@ -461,9 +480,11 @@ class MainWindow(QMainWindow):
                     font.setBold(True)
                     item.setFont(font)
             else:
-                bg_color = QColor("#E8F5E9") # Green tint
+                bg_color = QColor("#F0FDF4") # Soft green background
+                fg_color = QColor("#15803D") # Dark green text
                 for item in (status_item, student_item, filename_item, ext_item, author_item, last_by_item, date_item, msg_item):
                     item.setBackground(bg_color)
+                    item.setForeground(fg_color)
 
             self.table.setItem(row_idx, 0, status_item)
             self.table.setItem(row_idx, 1, student_item)
@@ -514,7 +535,7 @@ class MainWindow(QMainWindow):
         ws.append(headers)
 
         for r in self.all_results:
-            created_str = r['creation_date'].strftime("%Y-%m-%d %H:%M:%S") if r['creation_date'] else "N/A"
+            created_str = _format_date(r.get('creation_date'))
             if r.get('is_corrupted'):
                 st = "DAÑADO / CORRUPTO"
             elif r.get('is_duplicate'):
@@ -555,7 +576,7 @@ class MainWindow(QMainWindow):
                     "Autor_SolidWorks", "Ultimo_Guardado_Por", "Fecha_Creacion", "Detalles"
                 ])
                 for r in self.all_results:
-                    created_str = r['creation_date'].strftime("%Y-%m-%d %H:%M:%S") if r['creation_date'] else "N/A"
+                    created_str = _format_date(r.get('creation_date'))
                     if r.get('is_corrupted'):
                         st = "DAÑADO / CORRUPTO"
                     elif r.get('is_duplicate'):
@@ -576,3 +597,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Éxito", f"Reporte CSV exportado correctamente a:\n{file_path}")
         except Exception as e:
             QMessageBox.critical(self, "Error al Exportar", f"No se pudo guardar el archivo CSV:\n{e}")
+
+if __name__ == "__main__":
+    from main import main
+    main()
+

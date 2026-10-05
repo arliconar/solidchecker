@@ -8,14 +8,18 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
+# Allow oauthlib to accept scope changes (e.g. Google injecting 'openid' or selective consent)
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+
 SCOPES = [
+    'openid',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
     'https://www.googleapis.com/auth/classroom.courses.readonly',
     'https://www.googleapis.com/auth/classroom.coursework.students.readonly',
     'https://www.googleapis.com/auth/classroom.student-submissions.students.readonly',
     'https://www.googleapis.com/auth/classroom.rosters.readonly',
-    'https://www.googleapis.com/auth/drive.readonly',
-    'https://www.googleapis.com/auth/userinfo.email',
-    'https://www.googleapis.com/auth/userinfo.profile'
+    'https://www.googleapis.com/auth/drive.readonly'
 ]
 
 class ClassroomManager:
