@@ -122,34 +122,146 @@ class TestSolidChecker(unittest.TestCase):
             if os.path.exists(p2):
                 os.remove(p2)
 
-    def test_sample_files_computer_coincidence_detected(self):
-        f1 = 'cruz alma mayte.SLDPRT'
-        f2 = 'pieza 1 Maria Guadalupe Sanchez Martinez.SLDPRT'
-        if os.path.exists(f1) and os.path.exists(f2):
-            records = [
+    def test_format_editing_time(self):
+        from solidworks_parser import format_edit_time
+        self.assertEqual(format_edit_time(seconds=3660), "1h 01m")
+        self.assertEqual(format_edit_time(seconds=120), "2 min")
+        self.assertEqual(format_edit_time(minutes=45), "45 min")
+        self.assertEqual(format_edit_time(minutes=130), "2h 10m")
+        self.assertEqual(format_edit_time(seconds=0), "< 1 min")
+
+    def test_creation_date_duplicate_detected(self):
+        records = [
+            {'student_name': 'Alumno A', 'student_id': 'id_a', 'original_filename': 'p1.sldprt', 'local_path': 'p1.sldprt', 'extension': '.sldprt'},
+            {'student_name': 'Alumno B', 'student_id': 'id_b', 'original_filename': 'p2.sldprt', 'local_path': 'p2.sldprt', 'extension': '.sldprt'}
+        ]
+        from unittest.mock import patch
+        with patch('analyzer.parse_solidworks_file') as mock_parse:
+            mock_parse.side_effect = [
                 {
-                    'student_name': 'Alma Mayte Cruz',
-                    'student_id': 'id_1',
-                    'original_filename': f1,
-                    'local_path': f1,
-                    'extension': '.sldprt'
+                    'extension': '.sldprt',
+                    'author': 'Sin autor registrado',
+                    'origin_computer': 'PC-CARLOS',
+                    'last_computer': 'PC-CARLOS',
+                    'computer_display': 'PC-CARLOS',
+                    'workstations': ['PC-CARLOS'],
+                    'last_saved_by': 'SOLIDWORKS 2025',
+                    'creation_date': '24/09/2026 10:14:32',
+                    'last_saved_date': '24/09/2026 11:00:00',
+                    'total_edit_time_str': '45 min',
+                    'file_hash': 'hash_different_1',
+                    'is_corrupted': False,
+                    'error': None
                 },
                 {
-                    'student_name': 'Maria Guadalupe Sanchez Martinez',
-                    'student_id': 'id_2',
-                    'original_filename': f2,
-                    'local_path': f2,
-                    'extension': '.sldprt'
+                    'extension': '.sldprt',
+                    'author': 'Sin autor registrado',
+                    'origin_computer': 'PC-MIGUEL',
+                    'last_computer': 'PC-MIGUEL',
+                    'computer_display': 'PC-MIGUEL',
+                    'workstations': ['PC-MIGUEL'],
+                    'last_saved_by': 'SOLIDWORKS 2025',
+                    'creation_date': '24/09/2026 10:14:32',
+                    'last_saved_date': '27/09/2026 23:15:00',
+                    'total_edit_time_str': '47 min',
+                    'file_hash': 'hash_different_2',
+                    'is_corrupted': False,
+                    'error': None
                 }
             ]
             analysis = analyze_submissions(records, tempfile.gettempdir())
             self.assertEqual(analysis['duplicate_count'], 2)
             self.assertTrue(analysis['results'][0]['is_duplicate'])
             self.assertTrue(analysis['results'][1]['is_duplicate'])
-            self.assertIn('LABCAD20', analysis['results'][0]['status_msg'])
-            self.assertIn('LABCAD20', analysis['results'][1]['status_msg'])
-            self.assertEqual(analysis['results'][0]['origin_computer'], 'LABCAD20')
-            self.assertEqual(analysis['results'][1]['origin_computer'], 'LABCAD20')
+            self.assertIn('MISMA FECHA DE CREACIÓN', analysis['results'][0]['status_msg'])
+
+    def test_transfer_chain_duplicate_detected(self):
+        records = [
+            {'student_name': 'Alumno A', 'student_id': 'id_a', 'original_filename': 'p1.sldprt', 'local_path': 'p1.sldprt', 'extension': '.sldprt'},
+            {'student_name': 'Alumno B', 'student_id': 'id_b', 'original_filename': 'p2.sldprt', 'local_path': 'p2.sldprt', 'extension': '.sldprt'}
+        ]
+        from unittest.mock import patch
+        with patch('analyzer.parse_solidworks_file') as mock_parse:
+            mock_parse.side_effect = [
+                {
+                    'extension': '.sldprt',
+                    'author': 'Sin autor registrado',
+                    'origin_computer': 'LAPTOP-CARLOS',
+                    'last_computer': 'LAPTOP-CARLOS',
+                    'computer_display': 'LAPTOP-CARLOS',
+                    'workstations': ['LAPTOP-CARLOS'],
+                    'last_saved_by': 'SOLIDWORKS 2025',
+                    'creation_date': '24/09/2026 10:00:00',
+                    'last_saved_date': '24/09/2026 12:00:00',
+                    'total_edit_time_str': '2h 00m',
+                    'file_hash': 'hash1',
+                    'is_corrupted': False,
+                    'error': None
+                },
+                {
+                    'extension': '.sldprt',
+                    'author': 'Sin autor registrado',
+                    'origin_computer': 'LAPTOP-CARLOS',
+                    'last_computer': 'DESKTOP-JUAN',
+                    'computer_display': 'LAPTOP-CARLOS → DESKTOP-JUAN',
+                    'workstations': ['LAPTOP-CARLOS', 'DESKTOP-JUAN'],
+                    'last_saved_by': 'SOLIDWORKS 2025',
+                    'creation_date': '25/09/2026 14:00:00',
+                    'last_saved_date': '25/09/2026 14:10:00',
+                    'total_edit_time_str': '2h 10m',
+                    'file_hash': 'hash2',
+                    'is_corrupted': False,
+                    'error': None
+                }
+            ]
+            analysis = analyze_submissions(records, tempfile.gettempdir())
+            self.assertEqual(analysis['duplicate_count'], 2)
+            self.assertTrue(analysis['results'][1]['is_duplicate'])
+            self.assertIn('TRANSFERENCIA DE ARCHIVO', analysis['results'][1]['status_msg'])
+
+    def test_template_computer_not_falsely_flagged(self):
+        records = [
+            {'student_name': 'Alma', 'student_id': 'id_1', 'original_filename': 'p1.sldprt', 'local_path': 'p1.sldprt', 'extension': '.sldprt'},
+            {'student_name': 'Carlos', 'student_id': 'id_2', 'original_filename': 'p2.sldprt', 'local_path': 'p2.sldprt', 'extension': '.sldprt'}
+        ]
+        from unittest.mock import patch
+        with patch('analyzer.parse_solidworks_file') as mock_parse:
+            mock_parse.side_effect = [
+                {
+                    'extension': '.sldprt',
+                    'author': 'Sin autor registrado',
+                    'origin_computer': 'LABCAD20',
+                    'last_computer': 'LABCAD19',
+                    'computer_display': 'LABCAD20 → LABCAD19',
+                    'workstations': ['LABCAD20', 'LABCAD19'],
+                    'last_saved_by': 'SOLIDWORKS 2025',
+                    'creation_date': '24/09/2026 10:00:00',
+                    'last_saved_date': '24/09/2026 11:30:00',
+                    'total_edit_time_str': '1h 30m',
+                    'file_hash': 'hash_alma',
+                    'is_corrupted': False,
+                    'error': None
+                },
+                {
+                    'extension': '.sldprt',
+                    'author': 'Sin autor registrado',
+                    'origin_computer': 'LABCAD20',
+                    'last_computer': 'LABCAD08',
+                    'computer_display': 'LABCAD20 → LABCAD08',
+                    'workstations': ['LABCAD20', 'LABCAD08'],
+                    'last_saved_by': 'SOLIDWORKS 2025',
+                    'creation_date': '24/09/2026 10:05:00',
+                    'last_saved_date': '24/09/2026 11:45:00',
+                    'total_edit_time_str': '1h 40m',
+                    'file_hash': 'hash_carlos',
+                    'is_corrupted': False,
+                    'error': None
+                }
+            ]
+            analysis = analyze_submissions(records, tempfile.gettempdir())
+            self.assertEqual(analysis['duplicate_count'], 0)
+            self.assertFalse(analysis['results'][0]['is_duplicate'])
+            self.assertFalse(analysis['results'][1]['is_duplicate'])
 
     def test_different_computers_not_duplicates(self):
         records = [
@@ -179,8 +291,8 @@ class TestSolidChecker(unittest.TestCase):
                     'computer_display': 'LAPTOP-CARLOS',
                     'workstations': ['LAPTOP-CARLOS'],
                     'last_saved_by': 'SOLIDWORKS 2025',
-                    'creation_date': '2026-09-28',
-                    'last_saved_date': '2026-09-29',
+                    'creation_date': '2026-09-28 10:00:00',
+                    'last_saved_date': '2026-09-29 10:00:00',
                     'file_hash': 'hash1',
                     'is_corrupted': False,
                     'error': None
@@ -193,8 +305,8 @@ class TestSolidChecker(unittest.TestCase):
                     'computer_display': 'DESKTOP-ANA',
                     'workstations': ['DESKTOP-ANA'],
                     'last_saved_by': 'SOLIDWORKS 2025',
-                    'creation_date': '2026-09-28',
-                    'last_saved_date': '2026-09-29',
+                    'creation_date': '2026-09-29 15:00:00',
+                    'last_saved_date': '2026-09-29 16:00:00',
                     'file_hash': 'hash2',
                     'is_corrupted': False,
                     'error': None
@@ -233,8 +345,8 @@ class TestSolidChecker(unittest.TestCase):
                     'computer_display': 'PC-1',
                     'workstations': ['PC-1'],
                     'last_saved_by': 'SOLIDWORKS 2025',
-                    'creation_date': '2026-09-28',
-                    'last_saved_date': '2026-09-29',
+                    'creation_date': '2026-09-28 09:30:00',
+                    'last_saved_date': '2026-09-29 09:30:00',
                     'file_hash': 'hash1',
                     'is_corrupted': False,
                     'error': None
@@ -247,8 +359,8 @@ class TestSolidChecker(unittest.TestCase):
                     'computer_display': 'PC-2',
                     'workstations': ['PC-2'],
                     'last_saved_by': 'SOLIDWORKS 2025',
-                    'creation_date': '2026-09-28',
-                    'last_saved_date': '2026-09-29',
+                    'creation_date': '2026-09-29 12:45:00',
+                    'last_saved_date': '2026-09-29 14:00:00',
                     'file_hash': 'hash2',
                     'is_corrupted': False,
                     'error': None

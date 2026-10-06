@@ -228,29 +228,29 @@ class MainWindow(QMainWindow):
         self.table = QTableWidget()
         self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels([
-            "Estado",
             "Alumno (Classroom)",
             "Pieza / Archivo",
             "Tipo",
             "Computadora / Equipo",
+            "Tiempo Edición",
             "Autor Registrado",
             "Versión SolidWorks",
             "Fecha Creación",
             "Detalles / Diagnóstico"
         ])
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.Interactive)
         header.setSectionResizeMode(1, QHeaderView.Interactive)
-        header.setSectionResizeMode(2, QHeaderView.Interactive)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.Interactive)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.Interactive)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.Interactive)
         header.setSectionResizeMode(6, QHeaderView.Interactive)
         header.setSectionResizeMode(7, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(8, QHeaderView.Stretch)
-        self.table.setColumnWidth(1, 160)
-        self.table.setColumnWidth(2, 170)
-        self.table.setColumnWidth(4, 180)
+        self.table.setColumnWidth(0, 160)
+        self.table.setColumnWidth(1, 170)
+        self.table.setColumnWidth(3, 180)
         self.table.setColumnWidth(5, 140)
         self.table.setColumnWidth(6, 140)
         self.table.setAlternatingRowColors(True)
@@ -440,37 +440,21 @@ class MainWindow(QMainWindow):
         for row_idx, r in enumerate(results):
             self.table.insertRow(row_idx)
 
-            # Estado Icon / Label
-            if r.get('is_corrupted'):
-                status_text = "💥 DAÑADO"
-            elif r.get('is_duplicate'):
-                msg = r.get('status_msg', '')
-                if 'COPIA EXACTA' in msg:
-                    status_text = "⚠️ COPIA"
-                elif 'MISMO EQUIPO' in msg or 'MISMA COMPUTADORA' in msg or 'EQUIPO' in msg:
-                    status_text = "⚠️ MISMO EQUIPO"
-                else:
-                    status_text = "⚠️ DUPLICADO"
-            else:
-                status_text = "✅ OK"
-
-            status_item = QTableWidgetItem(status_text)
-            status_item.setTextAlignment(Qt.AlignCenter)
-
             student_item = QTableWidgetItem(r['student_name'])
             filename_item = QTableWidgetItem(r['filename'])
             ext_item = QTableWidgetItem(r['extension'].upper())
 
             comp_item = QTableWidgetItem(r.get('computer_display', 'Desconocido'))
+            time_item = QTableWidgetItem(r.get('total_edit_time_str', 'Desconocido'))
             author_item = QTableWidgetItem(r['author'])
-            last_by_item = QTableWidgetItem(r['last_saved_by'])
+            last_by_item = QTableWidgetItem(r.get('sw_version_display') or 'Desconocida')
 
             created_str = _format_date(r.get('creation_date'))
             date_item = QTableWidgetItem(created_str)
 
             msg_item = QTableWidgetItem(r['status_msg'])
 
-            all_items = (status_item, student_item, filename_item, ext_item, comp_item, author_item, last_by_item, date_item, msg_item)
+            all_items = (student_item, filename_item, ext_item, comp_item, time_item, author_item, last_by_item, date_item, msg_item)
 
             # Apply custom row formatting
             if r.get('is_corrupted'):
@@ -498,11 +482,11 @@ class MainWindow(QMainWindow):
                     item.setBackground(bg_color)
                     item.setForeground(fg_color)
 
-            self.table.setItem(row_idx, 0, status_item)
-            self.table.setItem(row_idx, 1, student_item)
-            self.table.setItem(row_idx, 2, filename_item)
-            self.table.setItem(row_idx, 3, ext_item)
-            self.table.setItem(row_idx, 4, comp_item)
+            self.table.setItem(row_idx, 0, student_item)
+            self.table.setItem(row_idx, 1, filename_item)
+            self.table.setItem(row_idx, 2, ext_item)
+            self.table.setItem(row_idx, 3, comp_item)
+            self.table.setItem(row_idx, 4, time_item)
             self.table.setItem(row_idx, 5, author_item)
             self.table.setItem(row_idx, 6, last_by_item)
             self.table.setItem(row_idx, 7, date_item)
@@ -521,7 +505,7 @@ class MainWindow(QMainWindow):
                 continue
 
             if query:
-                search_target = f"{r['student_name']} {r['filename']} {r.get('computer_display', '')} {r['author']} {r['last_saved_by']} {r['status_msg']}".lower()
+                search_target = f"{r['student_name']} {r['filename']} {r.get('computer_display', '')} {r.get('total_edit_time_str', '')} {r['author']} {r['last_saved_by']} {r.get('sw_version_display', '')} {r['status_msg']}".lower()
                 if query not in search_target:
                     continue
 
@@ -543,7 +527,7 @@ class MainWindow(QMainWindow):
 
         headers = [
             "Estado", "Alumno (Classroom)", "Pieza / Archivo", "Tipo",
-            "Computadora / Equipo", "Autor Registrado", "Versión SolidWorks", "Fecha Creación", "Detalles / Diagnóstico"
+            "Computadora / Equipo", "Tiempo Edición", "Autor Registrado", "Versión SolidWorks", "Fecha Creación", "Detalles / Diagnóstico"
         ]
         ws.append(headers)
 
@@ -562,8 +546,9 @@ class MainWindow(QMainWindow):
                 r['filename'],
                 r['extension'].upper(),
                 r.get('computer_display', 'Desconocido'),
+                r.get('total_edit_time_str', 'Desconocido'),
                 r['author'],
-                r['last_saved_by'],
+                r.get('sw_version_display') or 'Desconocida',
                 created_str,
                 r['status_msg']
             ])
@@ -587,7 +572,7 @@ class MainWindow(QMainWindow):
                 writer = csv.writer(f)
                 writer.writerow([
                     "Estado", "Alumno", "Archivo", "Tipo",
-                    "Computadora_Equipo", "Autor_SolidWorks", "Version_SolidWorks", "Fecha_Creacion", "Detalles"
+                    "Computadora_Equipo", "Tiempo_Edicion", "Autor_SolidWorks", "Version_SolidWorks", "Fecha_Creacion", "Detalles"
                 ])
                 for r in self.all_results:
                     created_str = _format_date(r.get('creation_date'))
@@ -604,8 +589,9 @@ class MainWindow(QMainWindow):
                         r['filename'],
                         r['extension'].upper(),
                         r.get('computer_display', 'Desconocido'),
+                        r.get('total_edit_time_str', 'Desconocido'),
                         r['author'],
-                        r['last_saved_by'],
+                        r.get('sw_version_display') or 'Desconocida',
                         created_str,
                         r['status_msg']
                     ])

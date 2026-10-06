@@ -8,6 +8,145 @@ import re
 import zlib
 import struct
 
+_STREAM_CACHE = {}
+
+def _swap_nibbles(b):
+    return bytes(((x << 4) & 0xF0) | (x >> 4) for x in b)
+
+def get_decompressed_streams(data):
+    """
+    Returns the list of decompressed internal streams of a modern SolidWorks file (2015+).
+
+    Each section in the container has the layout:
+        u32 compressed_size | u32 uncompressed_size | u32 name_len | name (nibble-swapped) | raw DEFLATE data
+    Sections can start at ANY byte offset (not aligned), so we look for that header
+    structure explicitly and validate it by decompressing to the declared size.
+    Falls back to a full byte-by-byte DEFLATE scan if no valid sections are found.
+    """
+    key = hashlib.md5(data).hexdigest()
+    if key in _STREAM_CACHE:
+        return _STREAM_CACHE[key]
+
+    streams = []
+    n = len(data)
+    i = 8
+    while i < n - 12:
+        csize, usize, nlen = struct.unpack_from('<III', data, i - 8)
+        if 0 < nlen <= 255 and 0 < csize <= n and 0 < usize <= 64 * 1024 * 1024:
+            start = i + 4 + nlen
+            if start + csize <= n:
+                name = _swap_nibbles(data[i + 4:start])
+                if all(32 <= c < 127 for c in name):
+                    try:
+                        dec = zlib.decompress(data[start:start + csize], -15)
+                        if len(dec) == usize:
+                            streams.append((name.decode('ascii', 'ignore'), dec))
+                            i = start + csize + 8
+                            continue
+                    except Exception:
+                        pass
+        i += 1
+
+    if not streams:
+        # Fallback: brute-force scan at every byte offset
+        seen = set()
+        for j in range(n - 10):
+            try:
+                d = zlib.decompressobj(-15)
+                dec = d.decompress(data[j:j + 1048576])
+                if len(dec) >= 40 and d.eof:
+                    h = hash(dec[:256])
+                    if h not in seen:
+                        seen.add(h)
+                        streams.append(('', dec))
+            except Exception:
+                pass
+
+    _STREAM_CACHE[key] = streams
+    return streams
+
+def _read_cstring(buf, pos):
+    """Reads an MFC CString (ff fe ff <len> utf16...) at pos. Returns (string, new_pos) or (None, pos)."""
+    if buf[pos:pos + 3] != b'\xff\xfe\xff':
+        return None, pos
+    pos += 3
+    ln = buf[pos]
+    pos += 1
+    if ln == 0xFF:
+        ln = struct.unpack_from('<H', buf, pos)[0]
+        pos += 2
+    s = buf[pos:pos + ln * 2].decode('utf-16le', errors='ignore')
+    return s, pos + ln * 2
+
+def _parse_header_cstring_array(dec):
+    """Parses moHeader_c -> su_CStringArray (list of Windows user/computer names that saved the file)."""
+    idx = dec.find(b'moHeader_c')
+    if idx == -1:
+        return []
+    idx = dec.find(b'su_CStringArray', idx)
+    if idx == -1:
+        return []
+    pos = idx + len(b'su_CStringArray')
+    try:
+        count = struct.unpack_from('<H', dec, pos)[0]
+        pos += 2
+        names = []
+        for _ in range(min(count, 64)):
+            s, pos = _read_cstring(dec, pos)
+            if s is None:
+                break
+            s = s.strip()
+            if s and s not in names:
+                names.append(s)
+        return names
+    except Exception:
+        return []
+
+def sw_internal_version_to_name(v):
+    """SolidWorks internal version number → product year. (9000=2016, 14000=2021, 18000=2025, 19000=2026...)"""
+    try:
+        v = int(v)
+    except Exception:
+        return None
+    if v >= 9000:
+        return f"SolidWorks {2007 + v // 1000}"
+    return f"SolidWorks (v{v})"
+
+def extract_sw_version_info(data):
+    """
+    Returns the SolidWorks version the file was last saved with, plus the history of
+    versions it went through (e.g. created in 2021 template, saved in 2025).
+    Sources: stream names '_MO_VERSION_<N>/...' and the 'moVersionHistory_c' record.
+    """
+    info = {'sw_version': None, 'sw_version_history': [], 'sw_version_display': 'Desconocida'}
+    try:
+        streams = get_decompressed_streams(data)
+        current = None
+        hist_nums = []
+        for name, dec in streams:
+            m = re.match(r'_MO_VERSION_(\d+)/', name or '')
+            if m:
+                current = max(current or 0, int(m.group(1)))
+                if name.endswith('/History'):
+                    # Each history entry ends with an empty CString (ff fe ff 00) followed by u32 version
+                    for mm in re.finditer(rb'\xff\xfe\xff\x00(.{4})', dec, re.S):
+                        val = struct.unpack('<I', mm.group(1))[0]
+                        if 1000 <= val <= 99000 and val % 1000 == 0 and val not in hist_nums:
+                            hist_nums.append(val)
+        if current and current not in hist_nums:
+            hist_nums.append(current)
+        hist_nums.sort()
+        if current:
+            info['sw_version'] = sw_internal_version_to_name(current)
+        info['sw_version_history'] = [sw_internal_version_to_name(v) for v in hist_nums]
+        if len(info['sw_version_history']) > 1:
+            info['sw_version_display'] = ' → '.join(info['sw_version_history'])
+        elif info['sw_version']:
+            info['sw_version_display'] = info['sw_version']
+    except Exception:
+        pass
+    return info
+
 GENERIC_NAMES = {
     'default', 'predeterminado', 'normal', 'solidworks', 'user', 'usuario',
     'administrator', 'admin', 'system', 'none', 'null', 'n/a', 'pieza', 'pieza1',
@@ -38,6 +177,39 @@ def is_machine_or_generic_name(val):
 def _is_valid_name(val):
     return not is_machine_or_generic_name(val)
 
+def format_edit_time(seconds=None, minutes=None, raw_str=None):
+    """Formats accumulated editing time into human-friendly format (e.g. 2h 15m, 45 min)."""
+    if raw_str and any(c in str(raw_str) for c in ('h', 'm', 's', ':')):
+        return str(raw_str).strip()
+    if minutes is not None:
+        try:
+            m = int(minutes)
+            if m <= 0:
+                return "< 1 min"
+            h = m // 60
+            rem_m = m % 60
+            if h > 0:
+                return f"{h}h {rem_m:02d}m"
+            return f"{m} min"
+        except Exception:
+            pass
+    if seconds is not None:
+        try:
+            s = int(seconds)
+            if s <= 0:
+                return "< 1 min"
+            h = s // 3600
+            rem_m = (s % 3600) // 60
+            rem_s = s % 60
+            if h > 0:
+                return f"{h}h {rem_m:02d}m"
+            if rem_m > 0:
+                return f"{rem_m} min"
+            return f"{rem_s} seg"
+        except Exception:
+            pass
+    return "Desconocido"
+
 def _convert_sw_timestamp(ts_str):
     try:
         ts = int(ts_str)
@@ -60,55 +232,27 @@ def extract_workstation_history(file_path, data=None):
                 data = f.read()
 
         if data:
-            file_size = len(data)
-            # Scan for moHeader_c su_CStringArray in all zlib & raw deflate streams
-            for i in range(0, file_size - 10, 2):
-                for wbits in (-15, 15, 31):
-                    try:
-                        decomp = zlib.decompress(data[i:i+65536], wbits)
-                        if b'moHeader_c' in decomp and b'su_CStringArray' in decomp:
-                            idx = decomp.find(b'su_CStringArray')
-                            if idx != -1:
-                                after = decomp[idx + len(b'su_CStringArray'):]
-                                count = struct.unpack('<H', after[:2])[0]
-                                rest = after[2:]
-                                found = []
-                                for m in re.finditer(b'(?:[\x20-\x7e]\x00){2,}', rest[:400]):
-                                    s = m.group(0).decode('utf-16le', errors='ignore').strip()
-                                    if s in ('Created', 'Modified', 'Pieza1') or s.startswith('mo'):
-                                        break
-                                    if s and len(s) >= 2:
-                                        found.append(s)
-                                    if len(found) >= count:
-                                        break
-                                if found:
-                                    machines = found
-                                    break
-                    except Exception:
-                        pass
-                if machines:
-                    break
-
-            # Check XML properties (SW-Last Saved By, dc:lastModifiedBy, dc:creator)
             xml_comps = []
-            for i in range(0, file_size - 10, 2):
-                for wbits in (-15, 15, 31):
-                    try:
-                        decomp = zlib.decompress(data[i:i+65536], wbits)
-                        if b'SW-Last Saved By' in decomp or b'lastModifiedBy' in decomp:
-                            txt = decomp.decode('utf-8', errors='ignore')
-                            m1 = re.search(r'<property[^>]*name="SW-Last Saved By"[^>]*>\s*<vt:lpstr>([^<]+)</vt:lpstr>', txt)
-                            if m1 and m1.group(1).strip():
-                                c = m1.group(1).strip()
-                                if c not in xml_comps:
-                                    xml_comps.append(c)
-                            m2 = re.search(r'<(?:dc:)?lastModifiedBy>([^<]+)</', txt)
-                            if m2 and m2.group(1).strip():
-                                c = m2.group(1).strip()
-                                if c not in xml_comps:
-                                    xml_comps.append(c)
-                    except Exception:
-                        pass
+            # Read every internal stream exactly (sections may start at any byte offset)
+            for _name, decomp in get_decompressed_streams(data):
+                if not machines and b'moHeader_c' in decomp and b'su_CStringArray' in decomp:
+                    found = _parse_header_cstring_array(decomp)
+                    if found:
+                        machines = found
+
+                if b'SW-Last Saved By' in decomp or b'lastModifiedBy' in decomp:
+                    txt = decomp.decode('utf-8', errors='ignore')
+                    m1 = re.search(r'<property[^>]*name="SW-Last Saved By"[^>]*>\s*<vt:lpstr>([^<]+)</vt:lpstr>', txt)
+                    if m1 and m1.group(1).strip():
+                        c = m1.group(1).strip()
+                        if c not in xml_comps:
+                            xml_comps.append(c)
+                    m2 = re.search(r'<(?:dc:)?lastModifiedBy>([^<]+)</', txt)
+                    if m2 and m2.group(1).strip():
+                        c = m2.group(1).strip()
+                        if c not in xml_comps:
+                            xml_comps.append(c)
+
 
             for c in xml_comps:
                 if c not in machines and not c.lower().startswith('solidworks'):
@@ -145,6 +289,8 @@ def _extract_modern_sw_xml_props(file_path):
         'last_saved_by': None,
         'creation_date': None,
         'last_saved_date': None,
+        'total_edit_time': None,
+        'total_edit_time_str': 'Desconocido',
         'title': '',
         'comments': '',
         'user_path': None,
@@ -155,41 +301,43 @@ def _extract_modern_sw_xml_props(file_path):
         with open(file_path, 'rb') as f:
             data = f.read()
 
-        file_size = len(data)
         found_xml_texts = []
 
-        # Fast scan for zlib and DEFLATE compressed XML & header streams across full file
-        for i in range(0, file_size - 10, 2):
-            is_zlib_hdr = data[i:i+2] in (b'\x78\x9c', b'\x78\x01', b'\x78\xda', b'\x78\x5e')
-            if not is_zlib_hdr and (i % 4 != 0):
+        # Read every internal compressed stream exactly
+        for _name, decomp in get_decompressed_streams(data):
+            if len(decomp) < 30:
                 continue
 
-            for wbits in (15, -15, 31):
-                try:
-                    decomp = zlib.decompress(data[i:i+32768], wbits)
-                    if len(decomp) < 30:
-                        continue
-
-                    # 1. moHeader_c (SolidWorks model header stream present in all versions)
-                    if b'moHeader_c' in decomp:
-                        u16_strs = [s.decode('utf-16le', errors='ignore') for s in re.findall(b'(?:[\x20-\x7e]\x00){2,}', decomp)]
-                        for s in u16_strs:
-                            s_clean = s.strip()
-                            m_u = re.search(r'[C-Z]:\\Users\\([^\\]+)\\', s_clean, re.IGNORECASE)
-                            if m_u and _is_valid_name(m_u.group(1)):
-                                if not props['user_path']:
-                                    props['user_path'] = m_u.group(1).strip()
-                                break
-
-                    # 2. Text & XML Property Matching
-                    if b'Properties' in decomp or b'swFile' in decomp or b'coreProperties' in decomp or b'lastModifiedBy' in decomp:
-                        txt = decomp.decode('utf-8', errors='ignore')
-                        found_xml_texts.append(txt)
+            # 1. moHeader_c (SolidWorks model header stream present in all versions)
+            if b'moHeader_c' in decomp:
+                u16_strs = [s.decode('utf-16le', errors='ignore') for s in re.findall(b'(?:[\x20-\x7e]\x00){2,}', decomp)]
+                for s in u16_strs:
+                    s_clean = s.strip()
+                    m_u = re.search(r'[C-Z]:\\Users\\([^\\]+)\\', s_clean, re.IGNORECASE)
+                    if m_u and _is_valid_name(m_u.group(1)):
+                        if not props['user_path']:
+                            props['user_path'] = m_u.group(1).strip()
                         break
-                except Exception:
-                    pass
+
+            # 2. Text & XML Property Matching
+            if b'Properties' in decomp or b'swFile' in decomp or b'coreProperties' in decomp or b'lastModifiedBy' in decomp:
+                found_xml_texts.append(decomp.decode('utf-8', errors='ignore'))
 
         for txt in found_xml_texts:
+            # Total Editing Time
+            if not props['total_edit_time']:
+                m_tt = re.search(r'<(?:app:)?TotalTime>(\d+)</(?:app:)?TotalTime>', txt, re.IGNORECASE)
+                if m_tt:
+                    mins = int(m_tt.group(1))
+                    props['total_edit_time'] = mins * 60
+                    props['total_edit_time_str'] = format_edit_time(minutes=mins)
+                else:
+                    m_sw_tt = re.search(r'swTotalEditingTime="(\d+)"', txt, re.IGNORECASE)
+                    if m_sw_tt:
+                        secs = int(m_sw_tt.group(1))
+                        props['total_edit_time'] = secs
+                        props['total_edit_time_str'] = format_edit_time(seconds=secs)
+
             # OpenXML core properties (dc:lastModifiedBy / dc:creator)
             if not _is_valid_name(props['last_saved_by']):
                 m_dc_last = re.search(r'<(?:dc:)?lastModifiedBy>([^<]+)</', txt, re.IGNORECASE)
@@ -240,6 +388,17 @@ def _extract_modern_sw_xml_props(file_path):
                 if m_cdate and m_cdate.group(1).strip():
                     props['creation_date'] = m_cdate.group(1).strip()
 
+            if not props['creation_date']:
+                m_ox_c = re.search(r'<(?:dcterms:)?created[^>]*>([^<]+)</', txt, re.IGNORECASE)
+                if m_ox_c and m_ox_c.group(1).strip():
+                    raw_dt = m_ox_c.group(1).strip()
+                    try:
+                        clean_dt = raw_dt.replace('Z', '+00:00')
+                        parsed_dt = datetime.datetime.fromisoformat(clean_dt)
+                        props['creation_date'] = parsed_dt.strftime('%d/%m/%Y %H:%M:%S')
+                    except Exception:
+                        props['creation_date'] = raw_dt
+
             # Version
             if not props['sw_version']:
                 m_ver = re.search(r'swVersion="(\d+)"', txt)
@@ -276,6 +435,9 @@ def _extract_modern_solidworks_props(file_path):
         'title': '',
         'comments': ''
     }
+
+    if not os.path.exists(file_path) or os.path.getsize(file_path) < 1024:
+        return _extract_modern_sw_xml_props(file_path)
 
     try:
         import ctypes
@@ -358,6 +520,10 @@ def _extract_modern_solidworks_props(file_path):
             if comment:
                 props['comments'] = comment
 
+            edit_time = raw_props.get('System.Document.TotalEditingTime')
+            if edit_time:
+                props['total_edit_time_str'] = edit_time
+
     except Exception:
         pass
 
@@ -375,6 +541,12 @@ def _extract_modern_solidworks_props(file_path):
         props['last_saved_by'] = xml_props['last_saved_by']
     if not props['last_saved_by'] and xml_props.get('sw_version'):
         props['last_saved_by'] = xml_props['sw_version']
+    if xml_props.get('total_edit_time'):
+        props['total_edit_time'] = xml_props['total_edit_time']
+    if xml_props.get('total_edit_time_str') and (not props.get('total_edit_time_str') or props.get('total_edit_time_str') == 'Desconocido'):
+        props['total_edit_time_str'] = xml_props['total_edit_time_str']
+    if xml_props.get('user_path'):
+        props['user_path'] = xml_props['user_path']
 
     return props
 
@@ -396,7 +568,13 @@ def parse_solidworks_file(file_path):
         'computer_display': 'Desconocido',
         'computer_name': 'Desconocido',
         'workstations': [],
+        'user_path': None,
+        'total_edit_time': None,
+        'total_edit_time_str': 'Desconocido',
         'last_saved_by': 'SolidWorks',
+        'sw_version': None,
+        'sw_version_history': [],
+        'sw_version_display': 'Desconocida',
         'creation_date': None,
         'last_saved_date': None,
         'title': '',
@@ -440,6 +618,10 @@ def parse_solidworks_file(file_path):
     result['computer_display'] = comp_info['computer_display']
     result['computer_name'] = comp_info['computer_name']
 
+    # Real SolidWorks version (from _MO_VERSION_<N> streams), independent of user names
+    ver_info = extract_sw_version_info(data)
+    result.update(ver_info)
+
     # 1. Legacy OLE2 structured storage (SolidWorks 2014 and older)
     if olefile.isOleFile(file_path):
         try:
@@ -474,6 +656,19 @@ def parse_solidworks_file(file_path):
 
             if meta.last_saved_time:
                 result['last_saved_date'] = meta.last_saved_time.strftime('%d/%m/%Y %H:%M:%S') if hasattr(meta.last_saved_time, 'strftime') else str(meta.last_saved_time)
+
+            if hasattr(meta, 'total_edit_time') and meta.total_edit_time is not None:
+                tet = meta.total_edit_time
+                if hasattr(tet, 'total_seconds'):
+                    secs = int(tet.total_seconds())
+                    result['total_edit_time'] = secs
+                    result['total_edit_time_str'] = format_edit_time(seconds=secs)
+                elif isinstance(tet, (int, float)):
+                    val = int(tet)
+                    if val > 10_000_000:
+                        val = val // 10_000_000
+                    result['total_edit_time'] = val
+                    result['total_edit_time_str'] = format_edit_time(seconds=val)
 
             if meta.title:
                 result['title'] = str(meta.title).strip()
@@ -516,6 +711,12 @@ def parse_solidworks_file(file_path):
             result['title'] = modern_props['title']
         if modern_props['comments']:
             result['comments'] = modern_props['comments']
+        if modern_props.get('total_edit_time'):
+            result['total_edit_time'] = modern_props['total_edit_time']
+        if modern_props.get('total_edit_time_str'):
+            result['total_edit_time_str'] = modern_props['total_edit_time_str']
+        if modern_props.get('user_path'):
+            result['user_path'] = modern_props['user_path']
 
         return result
 
