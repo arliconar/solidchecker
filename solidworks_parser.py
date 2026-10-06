@@ -375,8 +375,21 @@ def _extract_modern_sw_xml_props(file_path):
                     if m_user and _is_valid_name(m_user.group(1)):
                         props['user_path'] = m_user.group(1).strip()
 
-            # Dates
+            # Dates (Extracted strictly from internal stamped properties)
             if not props['creation_date']:
+                # 1. Exact ISO UTC timestamp from docProps/core.xml (converted to local timezone)
+                m_ox_c = re.search(r'<(?:dcterms:)?created[^>]*>([^<]+)</', txt, re.IGNORECASE)
+                if m_ox_c and m_ox_c.group(1).strip():
+                    raw_dt = m_ox_c.group(1).strip()
+                    try:
+                        clean_dt = raw_dt.replace('Z', '+00:00')
+                        parsed_dt = datetime.datetime.fromisoformat(clean_dt).astimezone()
+                        props['creation_date'] = parsed_dt.strftime('%d/%m/%Y %H:%M:%S')
+                    except Exception:
+                        props['creation_date'] = raw_dt
+
+            if not props['creation_date']:
+                # 2. Raw Unix timestamp from swCreationTime
                 m_ts = re.search(r'swCreationTime="(\d+)"', txt)
                 if m_ts:
                     dt_str = _convert_sw_timestamp(m_ts.group(1))
@@ -384,20 +397,10 @@ def _extract_modern_sw_xml_props(file_path):
                         props['creation_date'] = dt_str
 
             if not props['creation_date']:
+                # 3. Localized string from SW-Fecha de creacion
                 m_cdate = re.search(r'name="SW-\s*Fecha de creaci[^"]*"[^>]*>\s*<vt:lpstr>([^<]+)</vt:lpstr>', txt)
                 if m_cdate and m_cdate.group(1).strip():
                     props['creation_date'] = m_cdate.group(1).strip()
-
-            if not props['creation_date']:
-                m_ox_c = re.search(r'<(?:dcterms:)?created[^>]*>([^<]+)</', txt, re.IGNORECASE)
-                if m_ox_c and m_ox_c.group(1).strip():
-                    raw_dt = m_ox_c.group(1).strip()
-                    try:
-                        clean_dt = raw_dt.replace('Z', '+00:00')
-                        parsed_dt = datetime.datetime.fromisoformat(clean_dt)
-                        props['creation_date'] = parsed_dt.strftime('%d/%m/%Y %H:%M:%S')
-                    except Exception:
-                        props['creation_date'] = raw_dt
 
             # Version
             if not props['sw_version']:
