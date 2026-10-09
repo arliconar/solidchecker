@@ -309,6 +309,7 @@ def analyze_submissions(downloaded_records, temp_dir):
         'total_count': len(parsed_entries),
         'corrupted_count': corrupted_count,
         'duplicate_count': duplicate_count,
+        'download_dir': temp_dir,
         'duplicate_summary': {
             'hashes': {h: sorted(list(s)) for h, s in duplicate_hashes.items()},
             'creation_dates': {d: sorted(list(s)) for d, s in duplicate_creation_dates.items()},

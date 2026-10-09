@@ -185,7 +185,36 @@ def apply_app_theme(app):
     app.setFont(font)
     app.setStyleSheet(STYLESHEET)
 
+import traceback
+from datetime import datetime
+from PySide6.QtWidgets import QMessageBox
+
+def exception_hook(exctype, value, tb):
+    error_msg = "".join(traceback.format_exception(exctype, value, tb))
+    sys.__excepthook__(exctype, value, tb)
+    try:
+        with open("crash_log.txt", "a", encoding="utf-8") as f:
+            f.write(f"\n--- ERROR/CRASH REGISTRADO: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+            f.write(error_msg)
+            f.write("-" * 60 + "\n")
+    except Exception:
+        pass
+
+    app = QApplication.instance()
+    if app:
+        try:
+            msg_box = QMessageBox()
+            msg_box.setIcon(QMessageBox.Critical)
+            msg_box.setWindowTitle("Error Inesperado - SolidChecker")
+            msg_box.setText("Ocurrió un error inesperado en la aplicación.")
+            msg_box.setInformativeText(f"Se ha guardado un reporte técnico en 'crash_log.txt'.\n\nDetalle: {value}")
+            msg_box.setDetailedText(error_msg)
+            msg_box.exec()
+        except Exception:
+            pass
+
 def main():
+    sys.excepthook = exception_hook
     app = QApplication(sys.argv)
     apply_app_theme(app)
 

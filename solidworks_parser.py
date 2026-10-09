@@ -219,6 +219,100 @@ def _convert_sw_timestamp(ts_str):
         pass
     return None
 
+_MONTHS_MAP = {
+    'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4, 'mayo': 5, 'junio': 6,
+    'julio': 7, 'agosto': 8, 'septiembre': 9, 'octubre': 10, 'noviembre': 11, 'diciembre': 12,
+    'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
+    'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12
+}
+
+def normalize_date_string(val):
+    """
+    Standardizes any date or timestamp string into 'DD/MM/YYYY HH:MM:SS'.
+    Supports:
+    - datetime / date objects
+    - Spanish textual format ('lunes, 28 de septiembre de 2026 07:26:30 a. m.')
+    - Standard slash/dash dates ('05/10/2026 11:09 a. m.')
+    - ISO 8601 strings ('2026-09-28T07:26:30Z')
+    """
+    if not val:
+        return None
+    if hasattr(val, 'strftime'):
+        return val.strftime('%d/%m/%Y %H:%M:%S')
+
+    s = str(val).strip()
+    if not s or s.lower() in ('none', 'n/a', 'null', 'desconocido'):
+        return None
+
+    # 1. ISO 8601 (2026-09-28T07:26:30Z)
+    if 'T' in s:
+        try:
+            clean = s.replace('Z', '+00:00')
+            dt = datetime.datetime.fromisoformat(clean)
+            return dt.strftime('%d/%m/%Y %H:%M:%S')
+        except Exception:
+            pass
+
+    # 2. Spanish text format ('lunes, 28 de septiembre de 2026 07:26:30 a. m.')
+    m_es = re.search(
+        r'(\d{1,2})\s+de\s+([a-zA-Z]+)\s+de\s+(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(a\.\s*m\.|p\.\s*m\.|am|pm)?',
+        s, re.IGNORECASE
+    )
+    if m_es:
+        day = int(m_es.group(1))
+        month = _MONTHS_MAP.get(m_es.group(2).lower(), 1)
+        year = int(m_es.group(3))
+        hour = int(m_es.group(4))
+        minute = int(m_es.group(5))
+        second = int(m_es.group(6)) if m_es.group(6) else 0
+        ampm = (m_es.group(7) or '').lower().replace('.', '').replace(' ', '')
+        if 'pm' in ampm and hour < 12:
+            hour += 12
+        elif 'am' in ampm and hour == 12:
+            hour = 0
+        return f"{day:02d}/{month:02d}/{year} {hour:02d}:{minute:02d}:{second:02d}"
+
+    # 3. Standard date format ('05/10/2026 11:09 a. m.' or '28/09/2026 07:21:59')
+    m_std = re.search(
+        r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(a\.\s*m\.|p\.\s*m\.|am|pm)?',
+        s, re.IGNORECASE
+    )
+    if m_std:
+        p1 = int(m_std.group(1))
+        p2 = int(m_std.group(2))
+        year = int(m_std.group(3))
+        day, month = p1, p2
+        hour = int(m_std.group(4))
+        minute = int(m_std.group(5))
+        second = int(m_std.group(6)) if m_std.group(6) else 0
+        ampm = (m_std.group(7) or '').lower().replace('.', '').replace(' ', '')
+        if 'pm' in ampm and hour < 12:
+            hour += 12
+        elif 'am' in ampm and hour == 12:
+            hour = 0
+        return f"{day:02d}/{month:02d}/{year} {hour:02d}:{minute:02d}:{second:02d}"
+
+    # 4. YYYY-MM-DD HH:MM:SS
+    m_iso = re.search(
+        r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(a\.\s*m\.|p\.\s*m\.|am|pm)?',
+        s, re.IGNORECASE
+    )
+    if m_iso:
+        year = int(m_iso.group(1))
+        month = int(m_iso.group(2))
+        day = int(m_iso.group(3))
+        hour = int(m_iso.group(4))
+        minute = int(m_iso.group(5))
+        second = int(m_iso.group(6)) if m_iso.group(6) else 0
+        ampm = (m_iso.group(7) or '').lower().replace('.', '').replace(' ', '')
+        if 'pm' in ampm and hour < 12:
+            hour += 12
+        elif 'am' in ampm and hour == 12:
+            hour = 0
+        return f"{day:02d}/{month:02d}/{year} {hour:02d}:{minute:02d}:{second:02d}"
+
+    return s
+
 def extract_workstation_history(file_path, data=None):
     """
     Extracts the list of computer workstation names (hostnames) that have
@@ -655,10 +749,10 @@ def parse_solidworks_file(file_path):
                 result['workstations'] = [last_saved]
 
             if meta.create_time:
-                result['creation_date'] = meta.create_time.strftime('%d/%m/%Y %H:%M:%S') if hasattr(meta.create_time, 'strftime') else str(meta.create_time)
+                result['creation_date'] = normalize_date_string(meta.create_time)
 
             if meta.last_saved_time:
-                result['last_saved_date'] = meta.last_saved_time.strftime('%d/%m/%Y %H:%M:%S') if hasattr(meta.last_saved_time, 'strftime') else str(meta.last_saved_time)
+                result['last_saved_date'] = normalize_date_string(meta.last_saved_time)
 
             if hasattr(meta, 'total_edit_time') and meta.total_edit_time is not None:
                 tet = meta.total_edit_time
@@ -707,9 +801,9 @@ def parse_solidworks_file(file_path):
             result['last_saved_by'] = 'SolidWorks (Versión moderna)'
 
         if modern_props['creation_date']:
-            result['creation_date'] = modern_props['creation_date']
+            result['creation_date'] = normalize_date_string(modern_props['creation_date'])
         if modern_props['last_saved_date']:
-            result['last_saved_date'] = modern_props['last_saved_date']
+            result['last_saved_date'] = normalize_date_string(modern_props['last_saved_date'])
         if modern_props['title']:
             result['title'] = modern_props['title']
         if modern_props['comments']:

@@ -111,6 +111,7 @@ class MainWindow(QMainWindow):
         self.coursework_data = []
         self.all_results = []
         self.duplicate_summary = {}
+        self.download_dir = None
 
         app = QApplication.instance()
         if app and not app.styleSheet():
@@ -210,6 +211,12 @@ class MainWindow(QMainWindow):
         self.chk_corrupted_only.stateChanged.connect(self._apply_filters)
         filter_layout.addWidget(self.chk_corrupted_only)
 
+        self.btn_open_folder = QPushButton("📁 Abrir Carpeta de Archivos")
+        self.btn_open_folder.setCursor(Qt.PointingHandCursor)
+        self.btn_open_folder.clicked.connect(self._open_download_folder)
+        self.btn_open_folder.setEnabled(False)
+        filter_layout.addWidget(self.btn_open_folder)
+
         self.btn_export_excel = QPushButton("📊 Exportar Excel")
         self.btn_export_excel.setCursor(Qt.PointingHandCursor)
         self.btn_export_excel.clicked.connect(self._export_to_excel)
@@ -226,33 +233,35 @@ class MainWindow(QMainWindow):
 
         # ------------------ RESULTS TABLE ------------------
         self.table = QTableWidget()
-        self.table.setColumnCount(9)
+        self.table.setColumnCount(10)
         self.table.setHorizontalHeaderLabels([
+            "Estado",
             "Alumno (Classroom)",
             "Pieza / Archivo",
             "Tipo",
             "Computadora / Equipo",
             "Tiempo Edición",
             "Autor Registrado",
-            "Versión SolidWorks",
+            "Último Guardado Por",
             "Fecha Creación",
             "Detalles / Diagnóstico"
         ])
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Interactive)
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Interactive)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.Interactive)
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.Interactive)
+        header.setSectionResizeMode(2, QHeaderView.Interactive)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.Interactive)
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(6, QHeaderView.Interactive)
-        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(8, QHeaderView.Stretch)
-        self.table.setColumnWidth(0, 160)
-        self.table.setColumnWidth(1, 170)
-        self.table.setColumnWidth(3, 180)
-        self.table.setColumnWidth(5, 140)
+        header.setSectionResizeMode(7, QHeaderView.Interactive)
+        header.setSectionResizeMode(8, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(9, QHeaderView.Stretch)
+        self.table.setColumnWidth(1, 160)
+        self.table.setColumnWidth(2, 170)
+        self.table.setColumnWidth(4, 180)
         self.table.setColumnWidth(6, 140)
+        self.table.setColumnWidth(7, 140)
         self.table.setAlternatingRowColors(True)
 
         main_layout.addWidget(self.table)
@@ -416,15 +425,27 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(False)
 
         if success:
+            self.download_dir = analysis_data.get('download_dir')
             self.all_results = analysis_data.get('results', [])
             self.duplicate_summary = analysis_data.get('duplicate_summary', {})
             self._render_results_table(self.all_results)
+            self.btn_open_folder.setEnabled(bool(self.download_dir and os.path.exists(self.download_dir)))
             self.btn_export_excel.setEnabled(len(self.all_results) > 0)
             self.btn_export_csv.setEnabled(len(self.all_results) > 0)
             self.lbl_status.setText("Análisis completado exitosamente.")
         else:
             self.lbl_status.setText("Error durante el análisis.")
             QMessageBox.critical(self, "Error de Análisis", f"Ocurrió un error procesando la tarea:\n{error_msg}")
+
+    def _open_download_folder(self):
+        if self.download_dir and os.path.exists(self.download_dir):
+            if sys.platform == 'win32':
+                os.startfile(self.download_dir)
+            else:
+                import subprocess
+                subprocess.Popen(['xdg-open' if sys.platform != 'darwin' else 'open', self.download_dir])
+        else:
+            QMessageBox.information(self, "Carpeta no encontrada", "No se encontró la carpeta temporal de descargas.")
 
     def _render_results_table(self, results):
         self.table.setRowCount(0)
@@ -440,6 +461,23 @@ class MainWindow(QMainWindow):
         for row_idx, r in enumerate(results):
             self.table.insertRow(row_idx)
 
+            # Estado Icon / Label
+            if r.get('is_corrupted'):
+                status_text = "💥 DAÑADO"
+            elif r.get('is_duplicate'):
+                msg = r.get('status_msg', '')
+                if 'COPIA EXACTA' in msg:
+                    status_text = "⚠️ COPIA"
+                elif 'MISMO EQUIPO' in msg or 'MISMA COMPUTADORA' in msg or 'EQUIPO' in msg:
+                    status_text = "⚠️ MISMO EQUIPO"
+                else:
+                    status_text = "⚠️ DUPLICADO"
+            else:
+                status_text = "✅ OK"
+
+            status_item = QTableWidgetItem(status_text)
+            status_item.setTextAlignment(Qt.AlignCenter)
+
             student_item = QTableWidgetItem(r['student_name'])
             filename_item = QTableWidgetItem(r['filename'])
             ext_item = QTableWidgetItem(r['extension'].upper())
@@ -447,14 +485,14 @@ class MainWindow(QMainWindow):
             comp_item = QTableWidgetItem(r.get('computer_display', 'Desconocido'))
             time_item = QTableWidgetItem(r.get('total_edit_time_str', 'Desconocido'))
             author_item = QTableWidgetItem(r['author'])
-            last_by_item = QTableWidgetItem(r.get('sw_version_display') or 'Desconocida')
+            last_by_item = QTableWidgetItem(r['last_saved_by'])
 
             created_str = _format_date(r.get('creation_date'))
             date_item = QTableWidgetItem(created_str)
 
             msg_item = QTableWidgetItem(r['status_msg'])
 
-            all_items = (student_item, filename_item, ext_item, comp_item, time_item, author_item, last_by_item, date_item, msg_item)
+            all_items = (status_item, student_item, filename_item, ext_item, comp_item, time_item, author_item, last_by_item, date_item, msg_item)
 
             # Apply custom row formatting
             if r.get('is_corrupted'):
@@ -482,15 +520,16 @@ class MainWindow(QMainWindow):
                     item.setBackground(bg_color)
                     item.setForeground(fg_color)
 
-            self.table.setItem(row_idx, 0, student_item)
-            self.table.setItem(row_idx, 1, filename_item)
-            self.table.setItem(row_idx, 2, ext_item)
-            self.table.setItem(row_idx, 3, comp_item)
-            self.table.setItem(row_idx, 4, time_item)
-            self.table.setItem(row_idx, 5, author_item)
-            self.table.setItem(row_idx, 6, last_by_item)
-            self.table.setItem(row_idx, 7, date_item)
-            self.table.setItem(row_idx, 8, msg_item)
+            self.table.setItem(row_idx, 0, status_item)
+            self.table.setItem(row_idx, 1, student_item)
+            self.table.setItem(row_idx, 2, filename_item)
+            self.table.setItem(row_idx, 3, ext_item)
+            self.table.setItem(row_idx, 4, comp_item)
+            self.table.setItem(row_idx, 5, time_item)
+            self.table.setItem(row_idx, 6, author_item)
+            self.table.setItem(row_idx, 7, last_by_item)
+            self.table.setItem(row_idx, 8, date_item)
+            self.table.setItem(row_idx, 9, msg_item)
 
     def _apply_filters(self):
         query = self.search_box.text().lower().strip()
@@ -527,7 +566,8 @@ class MainWindow(QMainWindow):
 
         headers = [
             "Estado", "Alumno (Classroom)", "Pieza / Archivo", "Tipo",
-            "Computadora / Equipo", "Tiempo Edición", "Autor Registrado", "Versión SolidWorks", "Fecha Creación", "Detalles / Diagnóstico"
+            "Computadora / Equipo", "Tiempo Edición", "Autor Registrado",
+            "Último Guardado Por", "Fecha Creación", "Detalles / Diagnóstico"
         ]
         ws.append(headers)
 
@@ -548,7 +588,7 @@ class MainWindow(QMainWindow):
                 r.get('computer_display', 'Desconocido'),
                 r.get('total_edit_time_str', 'Desconocido'),
                 r['author'],
-                r.get('sw_version_display') or 'Desconocida',
+                r['last_saved_by'],
                 created_str,
                 r['status_msg']
             ])
@@ -572,7 +612,8 @@ class MainWindow(QMainWindow):
                 writer = csv.writer(f)
                 writer.writerow([
                     "Estado", "Alumno", "Archivo", "Tipo",
-                    "Computadora_Equipo", "Tiempo_Edicion", "Autor_SolidWorks", "Version_SolidWorks", "Fecha_Creacion", "Detalles"
+                    "Computadora_Equipo", "Tiempo_Edicion", "Autor_SolidWorks",
+                    "Ultimo_Guardado_Por", "Fecha_Creacion", "Detalles"
                 ])
                 for r in self.all_results:
                     created_str = _format_date(r.get('creation_date'))
@@ -591,13 +632,26 @@ class MainWindow(QMainWindow):
                         r.get('computer_display', 'Desconocido'),
                         r.get('total_edit_time_str', 'Desconocido'),
                         r['author'],
-                        r.get('sw_version_display') or 'Desconocida',
+                        r['last_saved_by'],
                         created_str,
                         r['status_msg']
                     ])
             QMessageBox.information(self, "Éxito", f"Reporte CSV exportado correctamente a:\n{file_path}")
         except Exception as e:
             QMessageBox.critical(self, "Error al Exportar", f"No se pudo guardar el archivo CSV:\n{e}")
+
+    def closeEvent(self, event):
+        workers = [
+            getattr(self, 'auth_worker', None),
+            getattr(self, 'courses_worker', None),
+            getattr(self, 'coursework_worker', None),
+            getattr(self, 'analyze_worker', None),
+        ]
+        for worker in workers:
+            if worker and worker.isRunning():
+                worker.quit()
+                worker.wait(1000)
+        event.accept()
 
 if __name__ == "__main__":
     from main import main

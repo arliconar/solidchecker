@@ -291,6 +291,8 @@ class TestSolidChecker(unittest.TestCase):
                     'computer_display': 'LAPTOP-CARLOS',
                     'workstations': ['LAPTOP-CARLOS'],
                     'last_saved_by': 'SOLIDWORKS 2025',
+                    'creation_date': '2026-09-28',
+                    'last_saved_date': '2026-09-29',
                     'creation_date': '2026-09-28 10:00:00',
                     'last_saved_date': '2026-09-29 10:00:00',
                     'file_hash': 'hash1',
@@ -305,6 +307,8 @@ class TestSolidChecker(unittest.TestCase):
                     'computer_display': 'DESKTOP-ANA',
                     'workstations': ['DESKTOP-ANA'],
                     'last_saved_by': 'SOLIDWORKS 2025',
+                    'creation_date': '2026-09-28',
+                    'last_saved_date': '2026-09-29',
                     'creation_date': '2026-09-29 15:00:00',
                     'last_saved_date': '2026-09-29 16:00:00',
                     'file_hash': 'hash2',
@@ -345,6 +349,8 @@ class TestSolidChecker(unittest.TestCase):
                     'computer_display': 'PC-1',
                     'workstations': ['PC-1'],
                     'last_saved_by': 'SOLIDWORKS 2025',
+                    'creation_date': '2026-09-28',
+                    'last_saved_date': '2026-09-29',
                     'creation_date': '2026-09-28 09:30:00',
                     'last_saved_date': '2026-09-29 09:30:00',
                     'file_hash': 'hash1',
@@ -359,6 +365,8 @@ class TestSolidChecker(unittest.TestCase):
                     'computer_display': 'PC-2',
                     'workstations': ['PC-2'],
                     'last_saved_by': 'SOLIDWORKS 2025',
+                    'creation_date': '2026-09-28',
+                    'last_saved_date': '2026-09-29',
                     'creation_date': '2026-09-29 12:45:00',
                     'last_saved_date': '2026-09-29 14:00:00',
                     'file_hash': 'hash2',
@@ -367,6 +375,7 @@ class TestSolidChecker(unittest.TestCase):
                 }
             ]
             analysis = analyze_submissions(records, tempfile.gettempdir())
+            self.assertEqual(analysis['download_dir'], tempfile.gettempdir())
             self.assertEqual(analysis['duplicate_count'], 2)
             self.assertTrue(analysis['results'][0]['is_duplicate'])
             self.assertIn('COINCIDENCIA DE AUTOR', analysis['results'][0]['status_msg'])
