@@ -380,5 +380,19 @@ class TestSolidChecker(unittest.TestCase):
             self.assertTrue(analysis['results'][0]['is_duplicate'])
             self.assertIn('COINCIDENCIA DE AUTOR', analysis['results'][0]['status_msg'])
 
+    def test_last_saved_date_formatting(self):
+        from solidworks_parser import normalize_date_string
+        from gui import _format_date
+
+        # Test ISO UTC string with Z
+        iso_str = "2026-09-29T03:18:16Z"
+        res = normalize_date_string(iso_str)
+        self.assertIn("29/09/2026", res)
+
+        # Test datetime object
+        dt = datetime(2026, 10, 19, 14, 30, 45)
+        self.assertEqual(_format_date(dt), "19/10/2026 14:30:45")
+        self.assertEqual(_format_date(None), "N/A")
+
 if __name__ == '__main__':
     unittest.main()

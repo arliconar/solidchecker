@@ -19,7 +19,7 @@ def _format_date(dt):
     if not dt:
         return "N/A"
     if hasattr(dt, "strftime"):
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
+        return dt.strftime("%d/%m/%Y %H:%M:%S")
     return str(dt)
 
 
@@ -240,10 +240,10 @@ class MainWindow(QMainWindow):
             "Pieza / Archivo",
             "Tipo",
             "Computadora / Equipo",
-            "Tiempo Edición",
             "Autor Registrado",
             "Último Guardado Por",
             "Fecha Creación",
+            "Última Vez Guardado",
             "Detalles / Diagnóstico"
         ])
         header = self.table.horizontalHeader()
@@ -252,16 +252,16 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(2, QHeaderView.Interactive)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.Interactive)
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.Interactive)
         header.setSectionResizeMode(6, QHeaderView.Interactive)
-        header.setSectionResizeMode(7, QHeaderView.Interactive)
+        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(8, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(9, QHeaderView.Stretch)
         self.table.setColumnWidth(1, 160)
         self.table.setColumnWidth(2, 170)
         self.table.setColumnWidth(4, 180)
+        self.table.setColumnWidth(5, 140)
         self.table.setColumnWidth(6, 140)
-        self.table.setColumnWidth(7, 140)
         self.table.setAlternatingRowColors(True)
 
         main_layout.addWidget(self.table)
@@ -483,16 +483,18 @@ class MainWindow(QMainWindow):
             ext_item = QTableWidgetItem(r['extension'].upper())
 
             comp_item = QTableWidgetItem(r.get('computer_display', 'Desconocido'))
-            time_item = QTableWidgetItem(r.get('total_edit_time_str', 'Desconocido'))
             author_item = QTableWidgetItem(r['author'])
             last_by_item = QTableWidgetItem(r['last_saved_by'])
 
             created_str = _format_date(r.get('creation_date'))
-            date_item = QTableWidgetItem(created_str)
+            created_item = QTableWidgetItem(created_str)
+
+            saved_str = _format_date(r.get('last_saved_date'))
+            saved_item = QTableWidgetItem(saved_str)
 
             msg_item = QTableWidgetItem(r['status_msg'])
 
-            all_items = (status_item, student_item, filename_item, ext_item, comp_item, time_item, author_item, last_by_item, date_item, msg_item)
+            all_items = (status_item, student_item, filename_item, ext_item, comp_item, author_item, last_by_item, created_item, saved_item, msg_item)
 
             # Apply custom row formatting
             if r.get('is_corrupted'):
@@ -525,10 +527,10 @@ class MainWindow(QMainWindow):
             self.table.setItem(row_idx, 2, filename_item)
             self.table.setItem(row_idx, 3, ext_item)
             self.table.setItem(row_idx, 4, comp_item)
-            self.table.setItem(row_idx, 5, time_item)
-            self.table.setItem(row_idx, 6, author_item)
-            self.table.setItem(row_idx, 7, last_by_item)
-            self.table.setItem(row_idx, 8, date_item)
+            self.table.setItem(row_idx, 5, author_item)
+            self.table.setItem(row_idx, 6, last_by_item)
+            self.table.setItem(row_idx, 7, created_item)
+            self.table.setItem(row_idx, 8, saved_item)
             self.table.setItem(row_idx, 9, msg_item)
 
     def _apply_filters(self):
@@ -544,7 +546,9 @@ class MainWindow(QMainWindow):
                 continue
 
             if query:
-                search_target = f"{r['student_name']} {r['filename']} {r.get('computer_display', '')} {r.get('total_edit_time_str', '')} {r['author']} {r['last_saved_by']} {r.get('sw_version_display', '')} {r['status_msg']}".lower()
+                created_str = _format_date(r.get('creation_date'))
+                saved_str = _format_date(r.get('last_saved_date'))
+                search_target = f"{r['student_name']} {r['filename']} {r.get('computer_display', '')} {r['author']} {r['last_saved_by']} {created_str} {saved_str} {r.get('sw_version_display', '')} {r['status_msg']}".lower()
                 if query not in search_target:
                     continue
 
@@ -566,13 +570,14 @@ class MainWindow(QMainWindow):
 
         headers = [
             "Estado", "Alumno (Classroom)", "Pieza / Archivo", "Tipo",
-            "Computadora / Equipo", "Tiempo Edición", "Autor Registrado",
-            "Último Guardado Por", "Fecha Creación", "Detalles / Diagnóstico"
+            "Computadora / Equipo", "Autor Registrado",
+            "Último Guardado Por", "Fecha Creación", "Última Vez Guardado", "Detalles / Diagnóstico"
         ]
         ws.append(headers)
 
         for r in self.all_results:
             created_str = _format_date(r.get('creation_date'))
+            saved_str = _format_date(r.get('last_saved_date'))
             if r.get('is_corrupted'):
                 st = "DAÑADO / CORRUPTO"
             elif r.get('is_duplicate'):
@@ -586,10 +591,10 @@ class MainWindow(QMainWindow):
                 r['filename'],
                 r['extension'].upper(),
                 r.get('computer_display', 'Desconocido'),
-                r.get('total_edit_time_str', 'Desconocido'),
                 r['author'],
                 r['last_saved_by'],
                 created_str,
+                saved_str,
                 r['status_msg']
             ])
 
@@ -612,11 +617,12 @@ class MainWindow(QMainWindow):
                 writer = csv.writer(f)
                 writer.writerow([
                     "Estado", "Alumno", "Archivo", "Tipo",
-                    "Computadora_Equipo", "Tiempo_Edicion", "Autor_SolidWorks",
-                    "Ultimo_Guardado_Por", "Fecha_Creacion", "Detalles"
+                    "Computadora_Equipo", "Autor_SolidWorks",
+                    "Ultimo_Guardado_Por", "Fecha_Creacion", "Ultima_Vez_Guardado", "Detalles"
                 ])
                 for r in self.all_results:
                     created_str = _format_date(r.get('creation_date'))
+                    saved_str = _format_date(r.get('last_saved_date'))
                     if r.get('is_corrupted'):
                         st = "DAÑADO / CORRUPTO"
                     elif r.get('is_duplicate'):
@@ -630,10 +636,10 @@ class MainWindow(QMainWindow):
                         r['filename'],
                         r['extension'].upper(),
                         r.get('computer_display', 'Desconocido'),
-                        r.get('total_edit_time_str', 'Desconocido'),
                         r['author'],
                         r['last_saved_by'],
                         created_str,
+                        saved_str,
                         r['status_msg']
                     ])
             QMessageBox.information(self, "Éxito", f"Reporte CSV exportado correctamente a:\n{file_path}")

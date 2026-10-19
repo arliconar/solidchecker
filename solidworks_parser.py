@@ -496,6 +496,33 @@ def _extract_modern_sw_xml_props(file_path):
                 if m_cdate and m_cdate.group(1).strip():
                     props['creation_date'] = m_cdate.group(1).strip()
 
+            # Last Saved Date (Extracted strictly from internal stamped properties)
+            if not props['last_saved_date']:
+                # 1. Exact ISO UTC timestamp from docProps/core.xml (converted to local timezone)
+                m_ox_m = re.search(r'<(?:dcterms:)?modified[^>]*>([^<]+)</', txt, re.IGNORECASE)
+                if m_ox_m and m_ox_m.group(1).strip():
+                    raw_dt = m_ox_m.group(1).strip()
+                    try:
+                        clean_dt = raw_dt.replace('Z', '+00:00')
+                        parsed_dt = datetime.datetime.fromisoformat(clean_dt).astimezone()
+                        props['last_saved_date'] = parsed_dt.strftime('%d/%m/%Y %H:%M:%S')
+                    except Exception:
+                        props['last_saved_date'] = raw_dt
+
+            if not props['last_saved_date']:
+                # 2. Raw Unix timestamp from swLastSaveTime
+                m_ts = re.search(r'swLastSaveTime="(\d+)"', txt)
+                if m_ts:
+                    dt_str = _convert_sw_timestamp(m_ts.group(1))
+                    if dt_str:
+                        props['last_saved_date'] = dt_str
+
+            if not props['last_saved_date']:
+                # 3. Localized string from SW-Fecha de guardado or SW-Ultima modificacion
+                m_sdate = re.search(r'name="SW-(?:\s*Fecha de guardado|Ultima modificaci[^"]*|Última modificaci[^"]*)"[^>]*>\s*<vt:lpstr>([^<]+)</vt:lpstr>', txt, re.IGNORECASE)
+                if m_sdate and m_sdate.group(1).strip():
+                    props['last_saved_date'] = m_sdate.group(1).strip()
+
             # Version
             if not props['sw_version']:
                 m_ver = re.search(r'swVersion="(\d+)"', txt)
@@ -605,7 +632,7 @@ def _extract_modern_solidworks_props(file_path):
             if created:
                 props['creation_date'] = created
 
-            saved = raw_props.get('System.Document.DateSaved') or raw_props.get('System.DateModified')
+            saved = raw_props.get('System.Document.DateSaved')
             if saved:
                 props['last_saved_date'] = saved
 
@@ -634,6 +661,8 @@ def _extract_modern_solidworks_props(file_path):
         props['author'] = xml_props['user_path']
     if xml_props.get('creation_date'):
         props['creation_date'] = xml_props['creation_date']
+    if xml_props.get('last_saved_date'):
+        props['last_saved_date'] = xml_props['last_saved_date']
     if not props['last_saved_by'] and xml_props.get('last_saved_by'):
         props['last_saved_by'] = xml_props['last_saved_by']
     if not props['last_saved_by'] and xml_props.get('sw_version'):

@@ -296,13 +296,11 @@ def analyze_submissions(downloaded_records, temp_dir):
         # ARCHIVO LEGÍTIMO (OK)
         else:
             comp_display = entry.get('computer_display')
-            time_str = entry.get('total_edit_time_str')
-            time_part = f" | Tiempo: {time_str}" if time_str and time_str != 'Desconocido' else ""
             if comp_display and comp_display != 'Desconocido':
-                entry['status_msg'] = f"✅ OK (Equipo: {comp_display}{time_part})"
+                entry['status_msg'] = f"✅ OK (Equipo: {comp_display})"
             else:
                 ver = entry.get('sw_version') or 'SolidWorks'
-                entry['status_msg'] = f"✅ OK ({ver}{time_part})"
+                entry['status_msg'] = f"✅ OK ({ver})"
 
     return {
         'results': parsed_entries,
