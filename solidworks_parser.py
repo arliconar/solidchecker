@@ -226,6 +226,19 @@ _MONTHS_MAP = {
     'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12
 }
 
+def format_date(dt):
+    """
+    Formats a datetime object or date string into 'DD/MM/YYYY HH:MM:SS'.
+    Returns 'N/A' if None or empty.
+    """
+    if not dt:
+        return "N/A"
+    if hasattr(dt, "strftime"):
+        return dt.strftime("%d/%m/%Y %H:%M:%S")
+    return str(dt)
+
+_format_date = format_date
+
 def normalize_date_string(val):
     """
     Standardizes any date or timestamp string into 'DD/MM/YYYY HH:MM:SS'.

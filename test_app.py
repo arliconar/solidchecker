@@ -381,8 +381,7 @@ class TestSolidChecker(unittest.TestCase):
             self.assertIn('COINCIDENCIA DE AUTOR', analysis['results'][0]['status_msg'])
 
     def test_last_saved_date_formatting(self):
-        from solidworks_parser import normalize_date_string
-        from gui import _format_date
+        from solidworks_parser import normalize_date_string, _format_date
 
         # Test ISO UTC string with Z
         iso_str = "2026-09-29T03:18:16Z"
