@@ -83,16 +83,31 @@ Al abrir la app:
 
 ---
 
-## 📦 Crear Ejecutable `.exe` (para distribuir sin Python)
+## 📦 Empaquetado y Compilación Multiplataforma
 
-Puedes empaquetar toda la aplicación en un archivo `.exe` ejecutable mediante `PyInstaller`:
+### Compilación Local con PyInstaller
+Puedes generar el binario para tu sistema operativo:
 
 ```bash
 pip install pyinstaller
-pyinstaller --noconfirm --onedir --windowed --name "SolidChecker" main.py
+pyinstaller --noconfirm --onefile --windowed --name solidchecker main.py
 ```
 
-El ejecutable se generará en la carpeta `dist/SolidChecker/SolidChecker.exe`. Recuerda colocar el archivo `credentials.json` en esa misma carpeta.
+### 🚀 Releases Automáticos con GitHub Actions (Windows, Linux y macOS)
+El proyecto cuenta con un flujo de integración continua en [`.github/workflows/release.yml`](file:///.github/workflows/release.yml) que compila automáticamente versiones nativas cada vez que se publica un tag:
+
+1. Crea y sube un tag de versión:
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+2. GitHub Actions ejecutará los tests y compilará en paralelo:
+   - **Windows (x64)**: `solidchecker-windows-x64.exe` y `solidchecker-windows-x64.zip`
+   - **Linux (x64)**: `solidchecker-linux-x64.tar.gz`
+   - **macOS (Apple Silicon)**: `solidchecker-macos.zip` (App bundle `.app`)
+3. Se creará automáticamente un **GitHub Release** con todos los binarios y sus firmas de integridad `SHA256SUMS.txt`.
+
+Recuerda colocar el archivo `credentials.json` en la misma carpeta del ejecutable descargado.
 
 ---
 
