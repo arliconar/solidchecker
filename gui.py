@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QLineEdit, QCheckBox, QProgressBar, QMessageBox,
-    QFileDialog, QGroupBox, QFrame, QSplitter
+    QFileDialog, QGroupBox, QFrame, QSplitter, QDialog, QTextEdit
 )
 
 from classroom_api import ClassroomManager
@@ -229,6 +229,12 @@ class MainWindow(QMainWindow):
         self.btn_export_csv.setEnabled(False)
         filter_layout.addWidget(self.btn_export_csv)
 
+        self.btn_pc_summary = QPushButton("💻 Comparativa PCs")
+        self.btn_pc_summary.setCursor(Qt.PointingHandCursor)
+        self.btn_pc_summary.clicked.connect(self._show_pc_summary_dialog)
+        self.btn_pc_summary.setEnabled(False)
+        filter_layout.addWidget(self.btn_pc_summary)
+
         main_layout.addWidget(filter_frame)
 
         # ------------------ RESULTS TABLE ------------------
@@ -256,13 +262,16 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(6, QHeaderView.Interactive)
         header.setSectionResizeMode(7, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(8, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(9, QHeaderView.Stretch)
+        header.setSectionResizeMode(9, QHeaderView.Interactive)
         self.table.setColumnWidth(1, 160)
         self.table.setColumnWidth(2, 170)
-        self.table.setColumnWidth(4, 180)
-        self.table.setColumnWidth(5, 140)
-        self.table.setColumnWidth(6, 140)
+        self.table.setColumnWidth(4, 160)
+        self.table.setColumnWidth(5, 130)
+        self.table.setColumnWidth(6, 130)
+        self.table.setColumnWidth(9, 450)
+        self.table.setWordWrap(True)
         self.table.setAlternatingRowColors(True)
+        self.table.itemDoubleClicked.connect(self._on_item_double_clicked)
 
         main_layout.addWidget(self.table)
 
@@ -428,10 +437,13 @@ class MainWindow(QMainWindow):
             self.download_dir = analysis_data.get('download_dir')
             self.all_results = analysis_data.get('results', [])
             self.duplicate_summary = analysis_data.get('duplicate_summary', {})
+            self.student_computers = analysis_data.get('student_computers', {})
+            self.student_pairs_pc_summary = analysis_data.get('student_pairs_pc_summary', {})
             self._render_results_table(self.all_results)
             self.btn_open_folder.setEnabled(bool(self.download_dir and os.path.exists(self.download_dir)))
             self.btn_export_excel.setEnabled(len(self.all_results) > 0)
             self.btn_export_csv.setEnabled(len(self.all_results) > 0)
+            self.btn_pc_summary.setEnabled(len(self.all_results) > 0)
             self.lbl_status.setText("Análisis completado exitosamente.")
         else:
             self.lbl_status.setText("Error durante el análisis.")
@@ -446,6 +458,80 @@ class MainWindow(QMainWindow):
                 subprocess.Popen(['xdg-open' if sys.platform != 'darwin' else 'open', self.download_dir])
         else:
             QMessageBox.information(self, "Carpeta no encontrada", "No se encontró la carpeta temporal de descargas.")
+
+    def _show_pc_summary_dialog(self):
+        """Muestra un diálogo con el cotejo de computadoras utilizadas por cada alumno."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("💻 Resumen Forense: Computadoras por Alumno")
+        dialog.resize(800, 520)
+
+        layout = QVBoxLayout(dialog)
+
+        info_lbl = QLabel(
+            "<b>Cotejo de Equipos (PCs) entre Alumnos:</b><br>"
+            "Este reporte analiza qué computadoras utilizó cada estudiante para realizar sus piezas y "
+            "destaca qué parejas de alumnos compartieron el mismo equipo de modelado."
+        )
+        info_lbl.setWordWrap(True)
+        layout.addWidget(info_lbl)
+
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setFont(QFont("Consolas", 10))
+
+        content_lines = []
+        pairs = getattr(self, 'student_pairs_pc_summary', {})
+        st_pcs = getattr(self, 'student_computers', {})
+
+        if pairs:
+            content_lines.append("=" * 70)
+            content_lines.append("⚠️ PAREJAS DE ALUMNOS CON PIEZAS EN LA MISMA COMPUTADORA:")
+            content_lines.append("=" * 70)
+            for pair_name, details in pairs.items():
+                content_lines.append(f"\n👉 {pair_name}:")
+                for d in details:
+                    pc = d['computer'].upper()
+                    pieces_a = ', '.join(d['pieces_student_a'])
+                    pieces_b = ', '.join(d['pieces_student_b'])
+                    content_lines.append(f"   • Computadora: {pc}")
+                    content_lines.append(f"     - Piezas Alumno 1: {pieces_a}")
+                    content_lines.append(f"     - Piezas Alumno 2: {pieces_b}")
+            content_lines.append("\n" + "-" * 70 + "\n")
+        else:
+            content_lines.append("✅ No se detectaron computadoras compartidas entre diferentes alumnos.\n\n")
+
+        content_lines.append("=" * 70)
+        content_lines.append("📋 PERFIL DE COMPUTADORAS REGISTRADAS POR ALUMNO:")
+        content_lines.append("=" * 70)
+        for student, pcs in sorted(st_pcs.items()):
+            pcs_str = ', '.join([p.upper() for p in pcs]) if pcs else 'Ninguna detectada / Plantilla'
+            content_lines.append(f"• {student}:")
+            content_lines.append(f"   Equipos: {pcs_str}")
+
+        text_edit.setPlainText('\n'.join(content_lines))
+        layout.addWidget(text_edit)
+
+        btn_close = QPushButton("Cerrar")
+        btn_close.clicked.connect(dialog.accept)
+        layout.addWidget(btn_close)
+
+        dialog.exec()
+
+    def _on_item_double_clicked(self, item):
+        """Al hacer doble clic en una fila, muestra el diagnóstico completo en una ventana emergente."""
+        row = item.row()
+        student = self.table.item(row, 1).text() if self.table.item(row, 1) else "Alumno"
+        filename = self.table.item(row, 2).text() if self.table.item(row, 2) else "Archivo"
+        details_item = self.table.item(row, 9)
+        details_text = details_item.text() if details_item else "Sin detalles."
+
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("🔍 Detalle del Diagnóstico")
+        msg_box.setText(f"<b>Alumno:</b> {student}<br><b>Archivo:</b> {filename}")
+        msg_box.setInformativeText(details_text)
+        msg_box.setIcon(QMessageBox.Information)
+        msg_box.setStandardButtons(QMessageBox.Ok)
+        msg_box.exec()
 
     def _render_results_table(self, results):
         self.table.setRowCount(0)
@@ -493,6 +579,7 @@ class MainWindow(QMainWindow):
             saved_item = QTableWidgetItem(saved_str)
 
             msg_item = QTableWidgetItem(r['status_msg'])
+            msg_item.setToolTip(r['status_msg'])
 
             all_items = (status_item, student_item, filename_item, ext_item, comp_item, author_item, last_by_item, created_item, saved_item, msg_item)
 

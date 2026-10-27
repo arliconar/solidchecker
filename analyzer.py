@@ -131,17 +131,22 @@ def analyze_submissions(downloaded_records, temp_dir):
         if (len(last_set) >= 2 and orig not in last_set) or len(last_set) >= 4:
             template_computers.add(orig)
 
-    # 2. Agrupación por indicadores forenses entre alumnos DISTINTOS
+    # 2. Agrupación por indicadores forenses y Perfil de Computadoras por Alumno
     hash_student_map = {}          # file_hash -> set(student_names)
     creation_date_student_map = {} # creation_date -> set(student_names)
     last_comp_student_map = {}     # last_computer -> set(student_names)
     user_path_student_map = {}     # user_path -> set(student_names)
     author_student_map = {}        # author -> set(student_names)
 
+    # Perfiles de computadoras usadas por alumno
+    student_computers = {}
+    student_pieces_by_comp = {}
+
     for entry in parsed_entries:
         if entry['is_corrupted']:
             continue
         sname = entry['student_name']
+        fname = entry.get('filename') or 'pieza'
 
         fhash = entry.get('file_hash')
         if fhash:
@@ -156,6 +161,15 @@ def analyze_submissions(downloaded_records, temp_dir):
         norm_last = last_comp.lower()
         if norm_last and norm_last not in ('desconocido', 'unknown', 'n/a', 'none', ''):
             last_comp_student_map.setdefault(norm_last, set()).add(sname)
+            if norm_last not in template_computers:
+                student_computers.setdefault(sname, set()).add(norm_last)
+                student_pieces_by_comp.setdefault((sname, norm_last), []).append(fname)
+
+        orig_comp = (entry.get('origin_computer') or '').strip()
+        norm_orig = orig_comp.lower()
+        if norm_orig and norm_orig not in ('desconocido', 'unknown', 'n/a', 'none', '') and norm_orig not in template_computers:
+            student_computers.setdefault(sname, set()).add(norm_orig)
+            student_pieces_by_comp.setdefault((sname, norm_orig), []).append(fname)
 
         upath = (entry.get('user_path') or '').strip()
         norm_upath = upath.lower()
@@ -269,13 +283,25 @@ def analyze_submissions(downloaded_records, temp_dir):
                 f"fue re-guardada y entregada por {', '.join(receivers)}"
             )
 
-        # REGLA 4: Mismo Equipo de Trabajo (Misma Computadora Final)
+        # REGLA 4: Mismo Equipo de Trabajo (Misma Computadora Final o Perfil Cruzado)
         elif norm_last in duplicate_last_comps:
             duplicate_count += 1
             others = sorted(list(duplicate_last_comps[norm_last] - {sname}))
             entry['is_duplicate'] = True
             entry['duplicate_students'] = others
-            entry['status_msg'] = f"⚠️ MISMO EQUIPO DE TRABAJO: Ambos guardaron desde la máquina '{last_comp}' ({', '.join(others)})"
+
+            # Detallar piezas de los otros alumnos hechas en este mismo equipo
+            detail_pieces = []
+            for other_st in others:
+                shared_pieces = student_pieces_by_comp.get((other_st, norm_last), [])
+                if shared_pieces:
+                    # Mostrar nombres únicos de piezas del otro alumno
+                    unique_shared = sorted(list(set(shared_pieces)))[:3]
+                    detail_pieces.append(f"{other_st} (en '{', '.join(unique_shared)}')")
+            if detail_pieces:
+                entry['status_msg'] = f"⚠️ MISMO EQUIPO DE TRABAJO: Pieza hecha en '{last_comp}', equipo también usado por {'; '.join(detail_pieces)}"
+            else:
+                entry['status_msg'] = f"⚠️ MISMO EQUIPO DE TRABAJO: Ambos guardaron desde la máquina '{last_comp}' ({', '.join(others)})"
 
         # REGLA 5: Rastro de Usuario de Windows
         elif upath in duplicate_user_paths:
@@ -302,12 +328,36 @@ def analyze_submissions(downloaded_records, temp_dir):
                 ver = entry.get('sw_version') or 'SolidWorks'
                 entry['status_msg'] = f"✅ OK ({ver})"
 
+    # 3. Resumen comparativo de Computadoras entre Alumnos (Cotejo de Tareas con Varias Piezas)
+    # Identifica si dos alumnos comparten computadoras y cuántas piezas realizaron en ellas
+    student_pairs_pc_summary = {}
+    all_students_list = sorted(list(student_computers.keys()))
+    for idx_a in range(len(all_students_list)):
+        for idx_b in range(idx_a + 1, len(all_students_list)):
+            st_a = all_students_list[idx_a]
+            st_b = all_students_list[idx_b]
+            common_pcs = student_computers[st_a].intersection(student_computers[st_b])
+            if common_pcs:
+                pair_key = f"{st_a} & {st_b}"
+                pc_details = []
+                for pc in common_pcs:
+                    pieces_a = student_pieces_by_comp.get((st_a, pc), [])
+                    pieces_b = student_pieces_by_comp.get((st_b, pc), [])
+                    pc_details.append({
+                        'computer': pc,
+                        'pieces_student_a': pieces_a,
+                        'pieces_student_b': pieces_b
+                    })
+                student_pairs_pc_summary[pair_key] = pc_details
+
     return {
         'results': parsed_entries,
         'total_count': len(parsed_entries),
         'corrupted_count': corrupted_count,
         'duplicate_count': duplicate_count,
         'download_dir': temp_dir,
+        'student_computers': {st: sorted(list(pcs)) for st, pcs in student_computers.items()},
+        'student_pairs_pc_summary': student_pairs_pc_summary,
         'duplicate_summary': {
             'hashes': {h: sorted(list(s)) for h, s in duplicate_hashes.items()},
             'creation_dates': {d: sorted(list(s)) for d, s in duplicate_creation_dates.items()},
